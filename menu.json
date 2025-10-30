@@ -1,0 +1,96 @@
+{
+  "categories": [
+    {
+      "name": "ピザ",
+      "items": [
+        {
+          "id": "pizza1",
+          "name": "マルゲリータ",
+          "description": "トマト、モッツァレラ、バジル",
+          "price": 1200,
+          "image": "/assets/maruge.jpeg",
+          "options": [
+            { "name": "チーズ増量", "price": 200 },
+            { "name": "生地変更（クリスピー）", "price": 100 }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "パスタ",
+      "items": [
+        {
+          "id": "pasta1",
+          "name": "カルボナーラ",
+          "description": "濃厚クリームソース",
+          "price": 1100,
+          "image": "/assets/karubo.jpg",
+          "options": [{ "name": "大盛り", "price": 150 }]
+        },
+        {
+          "id": "pasta2",
+          "name": "ペペロンチーノ",
+          "description": "",
+          "price": 1100,
+          "image": "/assets/pepe.jpeg",
+          "options": [{ "name": "大盛り", "price": 150 }]
+        }
+      ]
+    },
+    {
+      "name": "サラダ",
+      "items": [
+        {
+          "id": "sarada1",
+          "name": "シーザーサラダ",
+          "description": "特性ドレッシング",
+          "price": 800,
+          "image": "/assets/siza.jpg",
+          "options": []
+        },
+        {
+          "id": "sarada2",
+          "name": "エビアボカドサラダ",
+          "description": "特性ドレッシング",
+          "price": 800,
+          "image": "/assets/ebiabokado.jpg",
+          "options": []
+        }
+      ]
+    },
+    {
+      "name": "デザート",
+      "items": [
+        {
+          "id": "dezato1",
+          "name": "ティラミス",
+          "description": "イタリアンの定番デザート",
+          "price": 600,
+          "image": "/assets/thiramisu.jpg",
+          "options": []
+        }
+      ]
+    },
+    {
+      "name": "ドリンク",
+      "items": [
+        {
+          "id": "dorinnku1",
+          "name": "オレンジジュース",
+          "description": "果汁１００％",
+          "price": 400,
+          "image": "/assets/orenjijyusu.jpeg",
+          "options": []
+        },
+        {
+          "id": "dorinnku2",
+          "name": "アイスコーヒー",
+          "description": "",
+          "price": 400,
+          "image": "/assets/aiko.jpg",
+          "options": []
+        }
+      ]
+    }
+  ]
+}
