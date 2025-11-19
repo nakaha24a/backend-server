@@ -29,7 +29,7 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
           table_number INTEGER NOT NULL,
           items TEXT NOT NULL,
           total_price REAL NOT NULL,
-          status TEXT NOT NULL DEFAULT '調理中', 
+          status TEXT NOT NULL DEFAULT '注文受付', 
           timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )`,
         (err) => {
@@ -172,7 +172,7 @@ app.post("/api/orders", (req, res) => {
   const itemsJson = JSON.stringify(items);
   const timestamp = new Date().toISOString();
   const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
-               VALUES (?, ?, ?, ?, '調理中')`;
+               VALUES (?, ?, ?, ?, '注文受付')`;
   const params = [tableNumber, itemsJson, totalPrice, timestamp];
 
   db.run(sql, params, function (err) {
@@ -191,7 +191,7 @@ app.post("/api/orders", (req, res) => {
       items: items, // ★ 元のオブジェクト配列を返す
       total_price: totalPrice,
       timestamp: timestamp,
-      status: "調理中",
+      status: "注文受付",
     });
   });
 });
@@ -230,10 +230,10 @@ app.get("/api/orders", (req, res) => {
 // --- お店側 (Frontend-Admin/Kitchen) API ---
 // ------------------------------------------
 
-// GET /api/kitchen/orders: (店舗用) 「調理中」「提供済み」の注文一覧 (変更なし)
+// GET /api/kitchen/orders: (店舗用) 「注文受付」「提供済み」の注文一覧 (変更なし)
 app.get("/api/kitchen/orders", (req, res) => {
   const sql = `SELECT * FROM orders 
-               WHERE status = '調理中' OR status = '提供済み' 
+               WHERE status = '注文受付' OR status = '提供済み' 
                ORDER BY timestamp ASC`;
   db.all(sql, [], (err, rows) => {
     if (err) {
