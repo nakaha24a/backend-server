@@ -254,7 +254,7 @@ app.put("/api/orders/:id/status", (req, res) => {
   if (!status) {
     return res.status(400).json({ error: "ステータスは必須です。" });
   }
-  const allowedStatus = ["調理中", "提供済み", "会計済み", "キャンセル"];
+  const allowedStatus = ["調理中", "提供済み", "会計済み", "キャンセル","注文受付"];
   if (!allowedStatus.includes(status)) {
     return res.status(400).json({ error: "無効なステータスです。" });
   }
@@ -370,6 +370,27 @@ app.delete("/api/admin/menu/:id", (req, res) => {
     res.status(200).json({ message: "メニューを削除しました。", id: menuId });
   });
 });
+
+// テーブル番号一覧を取得
+app.get("/api/tables", (req, res) => {
+  const sql = `
+    SELECT DISTINCT table_number 
+    FROM orders 
+    WHERE status != '会計済み'
+    ORDER BY table_number ASC
+  `;
+
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error("DBエラー (テーブル番号取得):", err.message);
+      return res.status(500).json({ error: "テーブル番号の取得に失敗しました。" });
+    }
+    const tableNumbers = rows.map((r) => r.table_number);
+    res.json(tableNumbers);
+  });
+});
+
+
 
 // --- サーバー起動 (変更なし) ---
 app.listen(port, "0.0.0.0", () => {
