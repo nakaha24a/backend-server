@@ -23,7 +23,7 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
 
     db.serialize(() => {
       // ★ Orders テーブル (status カラムあり)
-      // デフォルト値を '注文受付' に変更
+      // デフォルト値を '注文受付' に設定
       db.run(
         `CREATE TABLE IF NOT EXISTS orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,7 +272,7 @@ app.get("/api/orders", (req, res) => {
 app.get("/api/kitchen/orders", (req, res) => {
   // ★ 変更: '注文受付' も取得対象に追加
   const sql = `SELECT * FROM orders 
-               WHERE status = '注文受付' OR status = '調理中' OR status = '提供済み' 
+               WHERE status = '注文受付' OR status = '調理中' OR status = '提供済み' OR status = '呼び出し'
                ORDER BY timestamp ASC`;
   db.all(sql, [], (err, rows) => {
     if (err) {
@@ -299,6 +299,7 @@ app.put("/api/orders/:id/status", (req, res) => {
     "会計済み",
     "キャンセル",
     "注文受付",
+    "呼び出し", // ★ 安全のため追加
   ];
   if (!allowedStatus.includes(status)) {
     return res.status(400).json({ error: "無効なステータスです。" });
@@ -320,6 +321,33 @@ app.put("/api/orders/:id/status", (req, res) => {
       id: orderId,
       status: status,
     });
+  });
+});
+
+// スタッフ呼び出しAPI (簡易実装)
+app.post("/api/call", (req, res) => {
+  const { tableNumber } = req.body;
+
+  if (!tableNumber) {
+    return res.status(400).json({ error: "テーブル番号は必須です。" });
+  }
+
+  const itemsJson = JSON.stringify([
+    { name: "スタッフ呼び出し", quantity: 1, price: 0 },
+  ]);
+  const timestamp = new Date().toISOString();
+
+  const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
+               VALUES (?, ?, 0, ?, '呼び出し')`;
+
+  db.run(sql, [tableNumber, itemsJson, timestamp], function (err) {
+    if (err) {
+      console.error("DBエラー (呼び出し保存):", err.message);
+      return res.status(500).json({ error: "呼び出しの保存に失敗しました。" });
+    }
+    res
+      .status(201)
+      .json({ message: "スタッフを呼び出しました", id: this.lastID });
   });
 });
 
