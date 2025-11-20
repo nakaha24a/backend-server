@@ -22,11 +22,12 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
     console.log("データベース (order_system.db) に接続しました。");
 
     db.serialize(() => {
-      // ★ Orders テーブル
+      // ★ Orders テーブル (status カラムあり)
+      // table_number を INTEGER (数値) に変更しました
       db.run(
         `CREATE TABLE IF NOT EXISTS orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          table_number TEXT NOT NULL,
+          table_number INTEGER NOT NULL,
           items TEXT NOT NULL,
           total_price REAL NOT NULL,
           status TEXT NOT NULL DEFAULT '注文受付', 
@@ -39,7 +40,7 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
         }
       );
 
-      // ★ Menus テーブル
+      // ★ Menus テーブル (メニューの原本)
       db.run(
         `CREATE TABLE IF NOT EXISTS Menus (
           id TEXT PRIMARY KEY,
@@ -67,7 +68,7 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
         }
       );
 
-      // ★ OrderDetails テーブル
+      // ★ OrderDetails テーブル (注文明細)
       db.run(
         `CREATE TABLE IF NOT EXISTS OrderDetails (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,7 +93,7 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
   }
 });
 
-// 初期データ読み込み関数
+// (loadInitialMenuData 関数は変更なし)
 function loadInitialMenuData() {
   try {
     const menuJsonPath = path.join(__dirname, "data", "menu.json");
@@ -132,7 +133,7 @@ function loadInitialMenuData() {
 // --- お客様用 (Frontend-Customer) API ---
 // ------------------------------------------
 
-// GET /api/menu
+// GET /api/menu: メニュー一覧を渡す (変更なし)
 app.get("/api/menu", (req, res) => {
   const sql = "SELECT * FROM Menus";
   db.all(sql, [], (err, rows) => {
@@ -149,7 +150,7 @@ app.get("/api/menu", (req, res) => {
       try {
         item.options = JSON.parse(item.options || "[]");
       } catch (e) {
-        item.options = [];
+        item.options = []; // パース失敗時は空配列
       }
       categoriesMap.get(categoryName).items.push(item);
     }
@@ -158,14 +159,22 @@ app.get("/api/menu", (req, res) => {
   });
 });
 
-// POST /api/orders
+// POST /api/orders: 注文を受け取る
 app.post("/api/orders", (req, res) => {
   const { tableNumber, items } = req.body;
 
-  if (!tableNumber || !items || !Array.isArray(items) || items.length === 0) {
+  // ★ テーブル番号を数値に変換してチェック
+  const tableNumInt = parseInt(tableNumber, 10);
+
+  if (
+    isNaN(tableNumInt) ||
+    !items ||
+    !Array.isArray(items) ||
+    items.length === 0
+  ) {
     return res
       .status(400)
-      .json({ error: "テーブル番号と注文項目は必須です。" });
+      .json({ error: "有効なテーブル番号(数値)と注文項目は必須です。" });
   }
 
   let totalPrice = 0;
@@ -186,12 +195,13 @@ app.post("/api/orders", (req, res) => {
   const itemsJson = JSON.stringify(items);
   const timestamp = new Date().toISOString();
 
-  // 初期ステータスを '注文受付' で保存
+  // 初期ステータスを '注文受付' に設定
   const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
                VALUES (?, ?, ?, ?, '注文受付')`;
-  const params = [tableNumber, itemsJson, totalPrice, timestamp];
+  // ★ 数値に変換した tableNumInt を保存
+  const params = [tableNumInt, itemsJson, totalPrice, timestamp];
 
-  // ① orders テーブルに保存
+  // ① まず orders テーブルに保存
   db.run(sql, params, function (err) {
     if (err) {
       console.error("DBエラー (注文保存):", err.message);
@@ -200,9 +210,9 @@ app.post("/api/orders", (req, res) => {
         .json({ error: "データベースへの注文保存中にエラーが発生しました。" });
     }
 
-    const orderId = this.lastID;
+    const orderId = this.lastID; // 発行された注文ID
 
-    // ② OrderDetails テーブルに保存
+    // ② 続いて OrderDetails テーブルに詳細を保存
     const sqlDetail = `INSERT INTO OrderDetails (order_id, menu_item_id, name, price, quantity, options) VALUES (?, ?, ?, ?, ?, ?)`;
     const stmt = db.prepare(sqlDetail);
 
@@ -223,7 +233,7 @@ app.post("/api/orders", (req, res) => {
 
       res.status(201).json({
         id: orderId,
-        table_number: tableNumber,
+        table_number: tableNumInt, // 数値を返す
         items: items,
         total_price: totalPrice,
         timestamp: timestamp,
@@ -268,7 +278,7 @@ app.get("/api/orders", (req, res) => {
 
 // GET /api/kitchen/orders: (店舗用) 注文一覧
 app.get("/api/kitchen/orders", (req, res) => {
-  // ★ '注文受付', '呼び出し' も取得対象に追加
+  // '注文受付' と '呼び出し' も取得対象に追加
   const sql = `SELECT * FROM orders 
                WHERE status = '注文受付' OR status = '調理中' OR status = '提供済み' OR status = '呼び出し'
                ORDER BY timestamp ASC`;
@@ -291,14 +301,13 @@ app.put("/api/orders/:id/status", (req, res) => {
   if (!status) {
     return res.status(400).json({ error: "ステータスは必須です。" });
   }
-  // ★ '呼び出し' を追加
   const allowedStatus = [
     "調理中",
     "提供済み",
     "会計済み",
     "キャンセル",
     "注文受付",
-    "呼び出し",
+    "呼び出し", // スタッフ呼び出し対応
   ];
   if (!allowedStatus.includes(status)) {
     return res.status(400).json({ error: "無効なステータスです。" });
@@ -327,7 +336,10 @@ app.put("/api/orders/:id/status", (req, res) => {
 app.post("/api/call", (req, res) => {
   const { tableNumber } = req.body;
 
-  if (!tableNumber) {
+  // ★ 数値変換してチェック
+  const tableNumInt = parseInt(tableNumber, 10);
+
+  if (!tableNumInt) {
     return res.status(400).json({ error: "テーブル番号は必須です。" });
   }
 
@@ -339,7 +351,8 @@ app.post("/api/call", (req, res) => {
   const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
                VALUES (?, ?, 0, ?, '呼び出し')`;
 
-  db.run(sql, [tableNumber, itemsJson, timestamp], function (err) {
+  // ★ tableNumInt (数値) を保存
+  db.run(sql, [tableNumInt, itemsJson, timestamp], function (err) {
     if (err) {
       console.error("DBエラー (呼び出し保存):", err.message);
       return res.status(500).json({ error: "呼び出しの保存に失敗しました。" });
@@ -350,7 +363,7 @@ app.post("/api/call", (req, res) => {
   });
 });
 
-// POST /api/admin/menu
+// POST /api/admin/menu: 新メニューを登録 (変更なし)
 app.post("/api/admin/menu", (req, res) => {
   const {
     id,
@@ -388,7 +401,7 @@ app.post("/api/admin/menu", (req, res) => {
   });
 });
 
-// PUT /api/admin/menu/:id
+// PUT /api/admin/menu/:id: メニューを編集 (変更なし)
 app.put("/api/admin/menu/:id", (req, res) => {
   const menuId = req.params.id;
   const { name, description, price, image, category, options, isRecommended } =
@@ -423,7 +436,7 @@ app.put("/api/admin/menu/:id", (req, res) => {
   });
 });
 
-// DELETE /api/admin/menu/:id
+// DELETE /api/admin/menu/:id: メニューを削除 (変更なし)
 app.delete("/api/admin/menu/:id", (req, res) => {
   const menuId = req.params.id;
   const sql = `DELETE FROM Menus WHERE id = ?`;
@@ -462,12 +475,12 @@ app.get("/api/tables", (req, res) => {
   });
 });
 
-// --- サーバー起動 ---
+// --- サーバー起動 (変更なし) ---
 app.listen(port, "0.0.0.0", () => {
   // ログは DB 接続成功時に表示
 });
 
-// --- DBクローズ処理 ---
+// --- DBクローズ処理 (変更なし) ---
 process.on("SIGINT", () => {
   db.close((err) => {
     if (err) console.error("Error closing database:", err.message);
