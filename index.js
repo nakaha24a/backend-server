@@ -23,11 +23,11 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
 
     db.serialize(() => {
       // ★ Orders テーブル (status カラムあり)
-      // デフォルト値を '注文受付' に設定
+      // table_number を INTEGER (数値) に変更しました
       db.run(
         `CREATE TABLE IF NOT EXISTS orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          table_number TEXT NOT NULL,
+          table_number INTEGER NOT NULL,
           items TEXT NOT NULL,
           total_price REAL NOT NULL,
           status TEXT NOT NULL DEFAULT '注文受付', 
@@ -68,7 +68,7 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
         }
       );
 
-      // ★★★ 追加: OrderDetails テーブル (注文明細) ★★★
+      // ★ OrderDetails テーブル (注文明細)
       db.run(
         `CREATE TABLE IF NOT EXISTS OrderDetails (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,10 +163,18 @@ app.get("/api/menu", (req, res) => {
 app.post("/api/orders", (req, res) => {
   const { tableNumber, items } = req.body;
 
-  if (!tableNumber || !items || !Array.isArray(items) || items.length === 0) {
+  // ★ テーブル番号を数値に変換してチェック
+  const tableNumInt = parseInt(tableNumber, 10);
+
+  if (
+    isNaN(tableNumInt) ||
+    !items ||
+    !Array.isArray(items) ||
+    items.length === 0
+  ) {
     return res
       .status(400)
-      .json({ error: "テーブル番号と注文項目は必須です。" });
+      .json({ error: "有効なテーブル番号(数値)と注文項目は必須です。" });
   }
 
   let totalPrice = 0;
@@ -187,10 +195,11 @@ app.post("/api/orders", (req, res) => {
   const itemsJson = JSON.stringify(items);
   const timestamp = new Date().toISOString();
 
-  // ★ 変更: 初期ステータスを '注文受付' に設定
+  // 初期ステータスを '注文受付' に設定
   const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
                VALUES (?, ?, ?, ?, '注文受付')`;
-  const params = [tableNumber, itemsJson, totalPrice, timestamp];
+  // ★ 数値に変換した tableNumInt を保存
+  const params = [tableNumInt, itemsJson, totalPrice, timestamp];
 
   // ① まず orders テーブルに保存
   db.run(sql, params, function (err) {
@@ -222,10 +231,9 @@ app.post("/api/orders", (req, res) => {
         stmt.finalize();
       });
 
-      // ★ 変更: レスポンスのステータスも '注文受付' に
       res.status(201).json({
         id: orderId,
-        table_number: tableNumber,
+        table_number: tableNumInt, // 数値を返す
         items: items,
         total_price: totalPrice,
         timestamp: timestamp,
@@ -270,7 +278,7 @@ app.get("/api/orders", (req, res) => {
 
 // GET /api/kitchen/orders: (店舗用) 注文一覧
 app.get("/api/kitchen/orders", (req, res) => {
-  // ★ 変更: '注文受付' も取得対象に追加
+  // '注文受付' と '呼び出し' も取得対象に追加
   const sql = `SELECT * FROM orders 
                WHERE status = '注文受付' OR status = '調理中' OR status = '提供済み' OR status = '呼び出し'
                ORDER BY timestamp ASC`;
@@ -285,7 +293,7 @@ app.get("/api/kitchen/orders", (req, res) => {
   });
 });
 
-// PUT /api/orders/:id/status: 注文のステータスを変更 (変更なし)
+// PUT /api/orders/:id/status: 注文のステータスを変更
 app.put("/api/orders/:id/status", (req, res) => {
   const orderId = req.params.id;
   const { status } = req.body;
@@ -299,7 +307,7 @@ app.put("/api/orders/:id/status", (req, res) => {
     "会計済み",
     "キャンセル",
     "注文受付",
-    "呼び出し", // ★ 安全のため追加
+    "呼び出し", // スタッフ呼び出し対応
   ];
   if (!allowedStatus.includes(status)) {
     return res.status(400).json({ error: "無効なステータスです。" });
@@ -324,11 +332,14 @@ app.put("/api/orders/:id/status", (req, res) => {
   });
 });
 
-// スタッフ呼び出しAPI (簡易実装)
+// ★ スタッフ呼び出しAPI
 app.post("/api/call", (req, res) => {
   const { tableNumber } = req.body;
 
-  if (!tableNumber) {
+  // ★ 数値変換してチェック
+  const tableNumInt = parseInt(tableNumber, 10);
+
+  if (!tableNumInt) {
     return res.status(400).json({ error: "テーブル番号は必須です。" });
   }
 
@@ -340,7 +351,8 @@ app.post("/api/call", (req, res) => {
   const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
                VALUES (?, ?, 0, ?, '呼び出し')`;
 
-  db.run(sql, [tableNumber, itemsJson, timestamp], function (err) {
+  // ★ tableNumInt (数値) を保存
+  db.run(sql, [tableNumInt, itemsJson, timestamp], function (err) {
     if (err) {
       console.error("DBエラー (呼び出し保存):", err.message);
       return res.status(500).json({ error: "呼び出しの保存に失敗しました。" });
