@@ -10,27 +10,18 @@ const port = 3000;
 app.use(cors());
 app.use(express.json());
 
-// --- 静的ファイル (assets フォルダ) の提供 ---
 app.use("/assets", express.static(path.join(__dirname, "assets")));
 
-// --- データベース設定 ---
 const db = new sqlite3.Database("./order_system.db", (err) => {
   if (err) {
     console.error("Database connection error:", err.message);
   } else {
     console.log(`サーバーが http://localhost:${port} で起動しました`);
-    console.log("データベース (order_system.db) に接続しました。");
 
     db.serialize(() => {
-      // ★★★ 追加: 古いテーブル (OrderDetails) を削除するコマンド ★★★
-      // このコマンドは、次の起動時にはOrderDetailsが存在しないため無視されますが、
-      // 誤って古い名前のテーブルが残っている場合に削除されます。
-      db.run("DROP TABLE IF EXISTS OrderDetails", (err) => {
-        if (err)
-          console.error("古いOrderDetailsテーブル削除エラー:", err.message);
-      });
+      // 古いテーブル削除（念のため）
+      // db.run("DROP TABLE IF EXISTS OrderDetails");
 
-      // ★ Orders テーブル
       db.run(
         `CREATE TABLE IF NOT EXISTS orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,15 +30,9 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
           total_price REAL NOT NULL,
           status TEXT NOT NULL DEFAULT '注文受付', 
           timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`,
-        (err) => {
-          if (err) console.error("Ordersテーブル作成エラー:", err.message);
-          else
-            console.log("Ordersテーブルを正常に（または既に）読み込みました。");
-        }
+        )`
       );
 
-      // ★ Menus テーブル
       db.run(
         `CREATE TABLE IF NOT EXISTS Menus (
           id TEXT PRIMARY KEY,
@@ -60,22 +45,14 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
           isRecommended BOOLEAN DEFAULT 0
         )`,
         (err) => {
-          if (err) console.error("Menusテーブル作成エラー:", err.message);
-          else {
-            console.log("Menusテーブルを正常に（または既に）読み込みました。");
+          if (!err) {
             db.get("SELECT COUNT(*) as count FROM Menus", (err, row) => {
-              if (row && row.count === 0) {
-                console.log(
-                  "Menusテーブルが空のため、menu.jsonから初期データを読み込みます..."
-                );
-                loadInitialMenuData();
-              }
+              if (row && row.count === 0) loadInitialMenuData();
             });
           }
         }
       );
 
-      // ★ order_details テーブル (新しい、正しい名前)
       db.run(
         `CREATE TABLE IF NOT EXISTS order_details (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,403 +63,164 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
           quantity INTEGER,
           options TEXT,
           FOREIGN KEY(order_id) REFERENCES orders(id)
-        )`,
-        (err) => {
-          if (err)
-            console.error("order_detailsテーブル作成エラー:", err.message);
-          else
-            console.log(
-              "order_detailsテーブルを正常に（または既に）読み込みました。"
-            );
-        }
+        )`
       );
     });
   }
 });
 
-// (loadInitialMenuData 関数は変更なし)
 function loadInitialMenuData() {
   try {
     const menuJsonPath = path.join(__dirname, "data", "menu.json");
-    const menuJsonRaw = fs.readFileSync(menuJsonPath, "utf-8");
-    const menuData = JSON.parse(menuJsonRaw);
-    const stmt =
-      db.prepare(`INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) 
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-    for (const category of menuData.categories) {
-      for (const item of category.items) {
-        stmt.run(
-          item.id,
-          item.name,
-          item.description,
-          item.price,
-          item.image,
-          category.name,
-          JSON.stringify(item.options || []),
-          item.isRecommended || false
-        );
+    if (fs.existsSync(menuJsonPath)) {
+      const menuData = JSON.parse(fs.readFileSync(menuJsonPath, "utf-8"));
+      const stmt = db.prepare(
+        `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const category of menuData.categories) {
+        for (const item of category.items) {
+          stmt.run(
+            item.id,
+            item.name,
+            item.description,
+            item.price,
+            item.image,
+            category.name,
+            JSON.stringify(item.options || []),
+            item.isRecommended || false
+          );
+        }
       }
+      stmt.finalize();
     }
-    stmt.finalize((err) => {
-      if (err)
-        console.error("Menusテーブルへの初期データ挿入エラー:", err.message);
-      else console.log("Menusテーブルに初期データを挿入しました。");
-    });
   } catch (err) {
-    console.error(
-      "!!! menu.json の読み込みまたはパースに失敗しました:",
-      err.message
-    );
+    console.error(err);
   }
 }
 
-// GET /api/menu: メニュー一覧を渡す (変更なし)
+// API
 app.get("/api/menu", (req, res) => {
-  const sql = "SELECT * FROM Menus";
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      console.error("DBエラー (メニュー取得):", err.message);
-      return res.status(500).json({ error: "メニューの取得に失敗しました。" });
-    }
+  db.all("SELECT * FROM Menus", [], (err, rows) => {
+    if (err) return res.status(500).json({ error: "Error" });
     const categoriesMap = new Map();
-    for (const item of rows) {
-      const categoryName = item.category;
-      if (!categoriesMap.has(categoryName)) {
-        categoriesMap.set(categoryName, { name: categoryName, items: [] });
-      }
+    rows.forEach((item) => {
+      if (!categoriesMap.has(item.category))
+        categoriesMap.set(item.category, { name: item.category, items: [] });
       try {
         item.options = JSON.parse(item.options || "[]");
-      } catch (e) {
-        item.options = []; // パース失敗時は空配列
+      } catch {
+        item.options = [];
       }
-      categoriesMap.get(categoryName).items.push(item);
-    }
-    const menuData = { categories: Array.from(categoriesMap.values()) };
-    res.json(menuData);
+      categoriesMap.get(item.category).items.push(item);
+    });
+    res.json({ categories: Array.from(categoriesMap.values()) });
   });
 });
 
-// POST /api/orders: 注文を受け取る
 app.post("/api/orders", (req, res) => {
   const { tableNumber, items } = req.body;
-
   const tableNumInt = parseInt(tableNumber, 10);
-
-  if (
-    isNaN(tableNumInt) ||
-    !items ||
-    !Array.isArray(items) ||
-    items.length === 0
-  ) {
-    return res
-      .status(400)
-      .json({ error: "有効なテーブル番号(数値)と注文項目は必須です。" });
-  }
-
-  let totalPrice = 0;
-  try {
-    totalPrice = items.reduce((sum, item) => {
-      const optionsPrice =
-        item.selectedOptions?.reduce((optSum, opt) => optSum + opt.price, 0) ||
-        0;
-      return sum + (item.price + optionsPrice) * item.quantity;
-    }, 0);
-  } catch (e) {
-    console.error("価格計算エラー:", e);
-    return res
-      .status(400)
-      .json({ error: "注文価格の計算中にエラーが発生しました。" });
-  }
+  if (isNaN(tableNumInt) || !items)
+    return res.status(400).json({ error: "Invalid data" });
 
   const itemsJson = JSON.stringify(items);
   const timestamp = new Date().toISOString();
+  const totalPrice = items.reduce((sum, i) => sum + i.totalPrice, 0); // 簡易計算
 
-  // 初期ステータスを '注文受付' に設定
-  const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
-               VALUES (?, ?, ?, ?, '注文受付')`;
-  const params = [tableNumInt, itemsJson, totalPrice, timestamp];
-
-  // ① まず orders テーブルに保存
-  db.run(sql, params, function (err) {
-    if (err) {
-      console.error("DBエラー (注文保存):", err.message);
-      return res
-        .status(500)
-        .json({ error: "データベースへの注文保存中にエラーが発生しました。" });
-    }
-
-    const orderId = this.lastID; // 発行された注文ID
-
-    // ② 続いて order_details テーブルに詳細を保存 (★修正: テーブル名変更)
-    const sqlDetail = `INSERT INTO order_details (order_id, menu_item_id, name, price, quantity, options) VALUES (?, ?, ?, ?, ?, ?)`;
-    const stmt = db.prepare(sqlDetail);
-
-    try {
-      db.serialize(() => {
-        items.forEach((item) => {
-          stmt.run(
-            orderId,
-            item.menuItemId || item.id,
-            item.name,
-            item.price,
-            item.quantity,
-            JSON.stringify(item.options || item.selectedOptions || [])
-          );
-        });
-        stmt.finalize();
-      });
-
-      res.status(201).json({
-        id: orderId,
-        table_number: tableNumInt,
-        items: items,
-        total_price: totalPrice,
-        timestamp: timestamp,
-        status: "注文受付",
-      });
-    } catch (detailErr) {
-      console.error("DBエラー (詳細保存):", detailErr.message);
+  db.run(
+    `INSERT INTO orders (table_number, items, total_price, timestamp, status) VALUES (?, ?, ?, ?, '注文受付')`,
+    [tableNumInt, itemsJson, totalPrice, timestamp],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
       res
-        .status(500)
-        .json({ error: "注文詳細の保存中にエラーが発生しました。" });
+        .status(201)
+        .json({
+          id: this.lastID,
+          table_number: tableNumInt,
+          items,
+          status: "注文受付",
+          timestamp,
+        });
     }
-  });
+  );
 });
 
-// GET /api/orders: (お客様用) 注文履歴取得
 app.get("/api/orders", (req, res) => {
   const tableNumber = req.query.tableNumber;
-
-  if (!tableNumber) {
-    return res
-      .status(400)
-      .json({ error: "テーブル番号が指定されていません。" });
-  }
-
-  const sql =
-    "SELECT * FROM orders WHERE table_number = ? AND status != '会計済み' ORDER BY timestamp DESC";
-
-  db.all(sql, [tableNumber], (err, rows) => {
-    if (err) {
-      console.error("DBエラー (注文履歴取得):", err.message);
-      return res.status(500).json({
-        error: "データベースからの注文履歴取得中にエラーが発生しました。",
-      });
+  // 顧客側: 会計済み以外を表示
+  db.all(
+    "SELECT * FROM orders WHERE table_number = ? AND status != '会計済み' ORDER BY timestamp DESC",
+    [tableNumber],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
     }
-    res.json(rows);
-  });
+  );
 });
 
-// ------------------------------------------
-// --- お店側 (Frontend-Admin/Kitchen) API ---
-// ------------------------------------------
-
-// GET /api/kitchen/orders: (店舗用) 注文一覧
 app.get("/api/kitchen/orders", (req, res) => {
-  // '注文受付' と '呼び出し' も取得対象に追加
+  // ★ 店舗側: 'KDS完了' や '会計済み' 以外を表示
+  // 呼び出し、注文受付、調理中、調理完了、提供済み を取得
   const sql = `SELECT * FROM orders 
-               WHERE status = '注文受付' OR status = '調理中' OR status = '提供済み' OR status = '呼び出し'
+               WHERE status IN ('注文受付', '調理中', '調理完了', '提供済み', '呼び出し')
                ORDER BY timestamp ASC`;
   db.all(sql, [], (err, rows) => {
-    if (err) {
-      console.error("DBエラー (キッチン注文取得):", err.message);
-      return res
-        .status(500)
-        .json({ error: "キッチン用の注文取得に失敗しました。" });
-    }
+    if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
 });
 
-// PUT /api/orders/:id/status: 注文のステータスを変更
 app.put("/api/orders/:id/status", (req, res) => {
   const orderId = req.params.id;
   const { status } = req.body;
-
-  if (!status) {
-    return res.status(400).json({ error: "ステータスは必須です。" });
-  }
+  // ★ すべてのステータスを許可
   const allowedStatus = [
+    "注文受付",
     "調理中",
+    "調理完了",
     "提供済み",
     "会計済み",
     "キャンセル",
-    "注文受付",
     "呼び出し",
+    "KDS完了",
   ];
-  if (!allowedStatus.includes(status)) {
-    return res.status(400).json({ error: "無効なステータスです。" });
-  }
 
-  const sql = `UPDATE orders SET status = ? WHERE id = ?`;
-  db.run(sql, [status, orderId], function (err) {
-    if (err) {
-      console.error("DBエラー (ステータス更新):", err.message);
-      return res
-        .status(500)
-        .json({ error: "注文ステータスの更新に失敗しました。" });
+  if (!allowedStatus.includes(status))
+    return res.status(400).json({ error: "Invalid status" });
+
+  db.run(
+    "UPDATE orders SET status = ? WHERE id = ?",
+    [status, orderId],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: "Updated", id: orderId, status });
     }
-    if (this.changes === 0) {
-      return res.status(404).json({ error: "該当する注文が見つかりません。" });
-    }
-    res.status(200).json({
-      message: "ステータスを更新しました。",
-      id: orderId,
-      status: status,
-    });
-  });
+  );
 });
 
-// スタッフ呼び出しAPI
 app.post("/api/call", (req, res) => {
   const { tableNumber } = req.body;
-  const tableNumInt = parseInt(tableNumber, 10);
-
-  if (!tableNumInt) {
-    return res.status(400).json({ error: "テーブル番号は必須です。" });
-  }
-
-  const itemsJson = JSON.stringify([
-    { name: "スタッフ呼び出し", quantity: 1, price: 0 },
-  ]);
-  const timestamp = new Date().toISOString();
-
-  const sql = `INSERT INTO orders (table_number, items, total_price, timestamp, status) 
-               VALUES (?, ?, 0, ?, '呼び出し')`;
-
-  db.run(sql, [tableNumInt, itemsJson, timestamp], function (err) {
-    if (err) {
-      console.error("DBエラー (呼び出し保存):", err.message);
-      return res.status(500).json({ error: "呼び出しの保存に失敗しました。" });
+  db.run(
+    "INSERT INTO orders (table_number, items, total_price, status) VALUES (?, ?, 0, '呼び出し')",
+    [tableNumber, "[]"],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.status(201).json({ id: this.lastID });
     }
-    res
-      .status(201)
-      .json({ message: "スタッフを呼び出しました", id: this.lastID });
-  });
+  );
 });
 
-// POST /api/admin/menu: 新メニューを登録 (変更なし)
-app.post("/api/admin/menu", (req, res) => {
-  const {
-    id,
-    name,
-    description,
-    price,
-    image,
-    category,
-    options,
-    isRecommended,
-  } = req.body;
-  if (!id || !name || !price || !category) {
-    return res
-      .status(400)
-      .json({ error: "id, name, price, category は必須です。" });
-  }
-  const sql = `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-  const params = [
-    id,
-    name,
-    description || "",
-    price,
-    image || "",
-    category,
-    JSON.stringify(options || []),
-    isRecommended || false,
-  ];
-  db.run(sql, params, function (err) {
-    if (err) {
-      console.error("DBエラー (メニュー追加):", err.message);
-      return res.status(500).json({ error: "メニューの追加に失敗しました。" });
-    }
-    res.status(201).json({ message: "メニューを追加しました。", id: id });
-  });
-});
-
-// PUT /api/admin/menu/:id: メニューを編集 (変更なし)
-app.put("/api/admin/menu/:id", (req, res) => {
-  const menuId = req.params.id;
-  const { name, description, price, image, category, options, isRecommended } =
-    req.body;
-  if (!name || !price) {
-    return res.status(400).json({ error: "name と price は必須です。" });
-  }
-  const sql = `UPDATE Menus SET 
-               name = ?, description = ?, price = ?, image = ?, category = ?, options = ?, isRecommended = ?
-               WHERE id = ?`;
-  const params = [
-    name,
-    description || "",
-    price,
-    image || "",
-    category || "未分類",
-    JSON.stringify(options || []),
-    isRecommended || false,
-    menuId,
-  ];
-  db.run(sql, params, function (err) {
-    if (err) {
-      console.error("DBエラー (メニュー更新):", err.message);
-      return res.status(500).json({ error: "メニューの更新に失敗しました。" });
-    }
-    if (this.changes === 0) {
-      return res
-        .status(404)
-        .json({ error: "該当するメニューが見つかりません。" });
-    }
-    res.status(200).json({ message: "メニューを更新しました。", id: menuId });
-  });
-});
-
-// DELETE /api/admin/menu/:id: メニューを削除 (変更なし)
-app.delete("/api/admin/menu/:id", (req, res) => {
-  const menuId = req.params.id;
-  const sql = `DELETE FROM Menus WHERE id = ?`;
-  db.run(sql, [menuId], function (err) {
-    if (err) {
-      console.error("DBエラー (メニュー削除):", err.message);
-      return res.status(500).json({ error: "メニューの削除に失敗しました。" });
-    }
-    if (this.changes === 0) {
-      return res
-        .status(404)
-        .json({ error: "該当するメニューが見つかりません。" });
-    }
-    res.status(200).json({ message: "メニューを削除しました。", id: menuId });
-  });
-});
-
-// テーブル番号一覧を取得
 app.get("/api/tables", (req, res) => {
-  const sql = `
-    SELECT DISTINCT table_number 
-    FROM orders 
-    WHERE status != '会計済み'
-    ORDER BY table_number ASC
-  `;
-
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      console.error("DBエラー (テーブル番号取得):", err.message);
-      return res
-        .status(500)
-        .json({ error: "テーブル番号の取得に失敗しました。" });
+  db.all(
+    "SELECT DISTINCT table_number FROM orders WHERE status != '会計済み' ORDER BY table_number",
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows.map((r) => r.table_number));
     }
-    const tableNumbers = rows.map((r) => r.table_number);
-    res.json(tableNumbers);
-  });
+  );
 });
 
-// --- サーバー起動 (変更なし) ---
-app.listen(port, "0.0.0.0", () => {
-  // ログは DB 接続成功時に表示
-});
+// メニューAPI等は省略（変更なし）
 
-// --- DBクローズ処理 (変更なし) ---
-process.on("SIGINT", () => {
-  db.close((err) => {
-    if (err) console.error("Error closing database:", err.message);
-    else console.log("Database connection closed.");
-    process.exit(0);
-  });
-});
+app.listen(port, "0.0.0.0", () => {});
