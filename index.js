@@ -117,6 +117,47 @@ app.get("/api/menu", (req, res) => {
   });
 });
 
+//追加したAPI
+// メニュー編集 
+app.put("/api/menu/:id", (req, res) => {
+  const { id } = req.params;
+  const { name, description, price, image, category } = req.body;
+
+  // バリデーション（必須項目チェック）
+  if (!name || !category || price === undefined) {
+    return res.status(400).json({ error: "name, category, price は必須です" });
+  }
+
+  db.run(
+    `UPDATE Menus SET name=?, description=?, price=?, image=?, category=? WHERE id=?`,
+    [name, description, price, image, category, id],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0) return res.status(404).json({ error: "該当メニューがありません" });
+
+      res.json({
+        message: "メニューを更新しました",
+        menu: { id, name, description, price, image, category },
+      });
+    }
+  );
+});
+
+// メニュー削除
+app.delete("/api/menu/:id", (req, res) => {
+  const { id } = req.params;
+
+  db.run(`DELETE FROM Menus WHERE id=?`, [id], function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) return res.status(404).json({ error: "該当メニューがありません" });
+
+    res.json({ message: "メニューを削除しました", id });
+  });
+});
+
+//追加ここまで
+
+
 app.post("/api/orders", (req, res) => {
   const { tableNumber, items } = req.body;
   const tableNumInt = parseInt(tableNumber, 10);
