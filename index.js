@@ -262,6 +262,8 @@ app.get("/api/tables", (req, res) => {
   );
 });
 
+app.use("/images", express.static(path.join(__dirname, "assets")));
+
 // メニューAPI等は省略（変更なし）
 
 app.listen(port, "0.0.0.0", () => {});
