@@ -118,6 +118,91 @@ app.get("/api/menu", (req, res) => {
 });
 
 //追加したAPI
+
+app.post("/api/menu/test", express.json(), (req, res) => {
+  console.log("req.body:", req.body);
+  res.json({ received: true });
+});
+
+
+// メニュー追加
+
+const multer = require("multer");
+const upload = multer({ dest: "tmp/" });
+
+app.post("/api/menu", upload.single("imageFile"), (req, res) => {
+  try {
+    console.log("req.body:", req.body);
+    console.log("req.file:", req.file);
+
+    const { id, name, description, price, category, isRecommended, options } = req.body;
+    const file = req.file;
+
+    if (!id || !name || !category || !price) {
+      return res.status(400).json({ error: "id, name, category, price は必須です" });
+    }
+
+    let imagePath = "";
+
+    // assets フォルダがなければ作成
+    const assetsDir = path.join(__dirname, "assets");
+    if (!fs.existsSync(assetsDir)) {
+      fs.mkdirSync(assetsDir);
+    }
+
+    if (file) {
+      const ext = path.extname(file.originalname) || ".jpeg";
+      const fileName = `${file.originalname.split(".")[0]}${ext}`;
+      const backendDest = path.join(assetsDir, fileName);
+
+      fs.renameSync(file.path, backendDest);
+
+      // frontend-admin/kds-app/public/assets にコピー（存在する場合のみ）
+      const frontendDest = path.join(
+        __dirname,
+        "../frontend-admin/kds-app/public/assets",
+        fileName
+      );
+      fs.copyFileSync(backendDest, frontendDest);
+
+      imagePath = `/assets/${fileName}`;
+      
+    }
+
+    // DB に登録
+    db.run(
+      `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        name,
+        description || "",
+        Number(price),
+        imagePath,
+        category,
+        options ? JSON.stringify(options) : JSON.stringify([]),
+        isRecommended === "true" || isRecommended === true ? 1 : 0,
+      ],
+      function (err) {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ error: err.message });
+        }
+        res.status(201).json({
+          message: "メニュー作成成功",
+          menu: { id, name, description, price, image: imagePath, category },
+        });
+      }
+    );
+  } catch (err) {
+    console.error("POST /api/menu error:", err);
+    res.status(500).json({ error: err.message });
+  }
+    
+});
+
+
+
 // メニュー編集 
 app.put("/api/menu/:id", (req, res) => {
   const { id } = req.params;
