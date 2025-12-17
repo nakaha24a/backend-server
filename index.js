@@ -1,3 +1,4 @@
+/* backend-server/index.js - 完全修正版 */
 const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
@@ -9,9 +10,11 @@ const port = 3000;
 
 app.use(cors());
 app.use(express.json());
+
+// 画像などを置くassetsフォルダを公開 (複数のパスに対応)
 app.use("/static", express.static("assets"));
-// 画像などを置くassetsフォルダを公開
 app.use("/assets", express.static(path.join(__dirname, "assets")));
+app.use("/images", express.static(path.join(__dirname, "assets")));
 
 // データベース接続
 const db = new sqlite3.Database("./order_system.db", (err) => {
@@ -51,25 +54,12 @@ function initDatabase() {
         )`,
       (err) => {
         if (!err) {
+          // データが空なら初期データをロード
           db.get("SELECT COUNT(*) as count FROM Menus", (err, row) => {
             if (row && row.count === 0) loadInitialMenuData();
           });
         }
       }
-    );
-
-    // 注文詳細テーブル (必要に応じて)
-    db.run(
-      `CREATE TABLE IF NOT EXISTS order_details (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          order_id INTEGER NOT NULL,
-          menu_item_id TEXT NOT NULL,
-          name TEXT,
-          price REAL,
-          quantity INTEGER,
-          options TEXT,
-          FOREIGN KEY(order_id) REFERENCES orders(id)
-        )`
     );
   });
 }
@@ -92,7 +82,7 @@ function loadInitialMenuData() {
             item.image,
             category.name,
             JSON.stringify(item.options || []),
-            item.isRecommended || false
+            item.isRecommended ? 1 : 0
           );
         }
       }
@@ -106,7 +96,7 @@ function loadInitialMenuData() {
 
 /* ================= API 定義 ================= */
 
-// 1. メニュー一覧取得 (GET) ★これが消えていたため一覧が出なかった可能性があります
+// 1. メニュー一覧取得
 app.get("/api/menu", (req, res) => {
   db.all("SELECT * FROM Menus", [], (err, rows) => {
     if (err) return res.status(500).json({ error: "Database error" });
@@ -114,36 +104,65 @@ app.get("/api/menu", (req, res) => {
     // カテゴリごとにまとめる処理
     const categoriesMap = new Map();
     rows.forEach((item) => {
-      if (!categoriesMap.has(item.category))
-        categoriesMap.set(item.category, { name: item.category, items: [] });
-      try {
-        item.options = JSON.parse(item.options || "[]");
-      } catch {
-        item.options = [];
-      }
-      // SQLiteのBOOLEANは0/1なので変換
-      item.isRecommended = item.isRecommended === 1;
+      // データの整形
+      const formattedItem = {
+        ...item,
+        options: JSON.parse(item.options || "[]"),
+        isRecommended: item.isRecommended === 1, // 0/1 を true/false に変換
+      };
 
-      categoriesMap.get(item.category).items.push(item);
+      if (!categoriesMap.has(item.category)) {
+        categoriesMap.set(item.category, { name: item.category, items: [] });
+      }
+      categoriesMap.get(item.category).items.push(formattedItem);
     });
     res.json({ categories: Array.from(categoriesMap.values()) });
   });
 });
 
-//追加したAPI
-// メニュー編集
+// 2. メニュー追加 (★ここが重要：新規作成用)
+app.post("/api/menu", (req, res) => {
+  const { id, name, description, price, image, category, isRecommended } =
+    req.body;
+
+  // 簡単なバリデーション
+  if (!id || !name || !category || price === undefined) {
+    return res.status(400).json({ error: "必須項目が不足しています" });
+  }
+
+  const stmt = db.prepare(
+    `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  stmt.run(
+    id,
+    name,
+    description,
+    price,
+    image,
+    category,
+    JSON.stringify([]), // オプションは一旦空で
+    isRecommended ? 1 : 0,
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.status(201).json({ message: "メニューを追加しました", id });
+    }
+  );
+  stmt.finalize();
+});
+
+// 3. メニュー編集 (★修正: isRecommendedも更新できるように)
 app.put("/api/menu/:id", (req, res) => {
   const { id } = req.params;
-  const { name, description, price, image, category } = req.body;
+  const { name, description, price, image, category, isRecommended } = req.body;
 
-  // バリデーション（必須項目チェック）
   if (!name || !category || price === undefined) {
     return res.status(400).json({ error: "name, category, price は必須です" });
   }
 
   db.run(
-    `UPDATE Menus SET name=?, description=?, price=?, image=?, category=? WHERE id=?`,
-    [name, description, price, image, category, id],
+    `UPDATE Menus SET name=?, description=?, price=?, image=?, category=?, isRecommended=? WHERE id=?`,
+    [name, description, price, image, category, isRecommended ? 1 : 0, id],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       if (this.changes === 0)
@@ -151,27 +170,24 @@ app.put("/api/menu/:id", (req, res) => {
 
       res.json({
         message: "メニューを更新しました",
-        menu: { id, name, description, price, image, category },
+        menu: { id, name, description, price, image, category, isRecommended },
       });
     }
   );
 });
 
-// メニュー削除
+// 4. メニュー削除
 app.delete("/api/menu/:id", (req, res) => {
   const { id } = req.params;
-
   db.run(`DELETE FROM Menus WHERE id=?`, [id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     if (this.changes === 0)
       return res.status(404).json({ error: "該当メニューがありません" });
-
     res.json({ message: "メニューを削除しました", id });
   });
 });
 
-//追加ここまで
-
+// 5. 注文作成
 app.post("/api/orders", (req, res) => {
   const { tableNumber, items } = req.body;
   const tableNumInt = parseInt(tableNumber, 10);
@@ -180,7 +196,7 @@ app.post("/api/orders", (req, res) => {
 
   const itemsJson = JSON.stringify(items);
   const timestamp = new Date().toISOString();
-  // total_priceの計算は本来サーバー側で厳密に行うべきですが、ここでは簡易的にクライアント値を信用または再計算
+  // 合計金額の計算
   const totalPrice = items.reduce(
     (sum, i) => sum + (i.totalPrice || i.price * i.quantity),
     0
@@ -202,6 +218,7 @@ app.post("/api/orders", (req, res) => {
   );
 });
 
+// 6. 注文取得 (Resto-app用: 自分のテーブルの注文)
 app.get("/api/orders", (req, res) => {
   const tableNumber = req.query.tableNumber;
   db.all(
@@ -209,21 +226,34 @@ app.get("/api/orders", (req, res) => {
     [tableNumber],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
-      res.json(rows);
+
+      // items文字列をJSONに戻して返す
+      const formattedRows = rows.map((row) => ({
+        ...row,
+        items: JSON.parse(row.items || "[]"),
+      }));
+      res.json(formattedRows);
     }
   );
 });
 
+// 7. KDS用 注文一覧 (全テーブル)
 app.get("/api/kitchen/orders", (req, res) => {
   const sql = `SELECT * FROM orders 
                WHERE status IN ('注文受付', '調理中', '調理完了', '提供済み', '呼び出し')
                ORDER BY timestamp ASC`;
   db.all(sql, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+
+    const formattedRows = rows.map((row) => ({
+      ...row,
+      items: JSON.parse(row.items || "[]"),
+    }));
+    res.json(formattedRows);
   });
 });
 
+// 8. ステータス更新
 app.put("/api/orders/:id/status", (req, res) => {
   const orderId = req.params.id;
   const { status } = req.body;
@@ -251,6 +281,7 @@ app.put("/api/orders/:id/status", (req, res) => {
   );
 });
 
+// 9. 呼び出し機能
 app.post("/api/call", (req, res) => {
   const { tableNumber } = req.body;
   db.run(
@@ -263,6 +294,7 @@ app.post("/api/call", (req, res) => {
   );
 });
 
+// 10. テーブル一覧取得
 app.get("/api/tables", (req, res) => {
   db.all(
     "SELECT DISTINCT table_number FROM orders WHERE status != '会計済み' ORDER BY table_number",
@@ -274,8 +306,6 @@ app.get("/api/tables", (req, res) => {
   );
 });
 
-app.use("/images", express.static(path.join(__dirname, "assets")));
-
-// メニューAPI等は省略（変更なし）
-
-app.listen(port, "0.0.0.0", () => {});
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Server running on port ${port}`);
+});
