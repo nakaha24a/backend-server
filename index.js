@@ -130,108 +130,47 @@ app.get("/api/menu", (req, res) => {
   });
 });
 
-// 2. メニュー作成 (POST) ★新規追加
-app.post("/api/menu", (req, res) => {
-  const {
-    id,
-    name,
-    description,
-    price,
-    image,
-    category,
-    options,
-    isRecommended,
-  } = req.body;
+//追加したAPI
+// メニュー編集
+app.put("/api/menu/:id", (req, res) => {
+  const { id } = req.params;
+  const { name, description, price, image, category } = req.body;
 
-  if (!id || !name || price === undefined || !category) {
-    return res
-      .status(400)
-      .json({ error: "必須項目(id, name, price, category)が不足しています" });
+  // バリデーション（必須項目チェック）
+  if (!name || !category || price === undefined) {
+    return res.status(400).json({ error: "name, category, price は必須です" });
   }
 
-  const optionsJson = JSON.stringify(options || []);
-  const recommended = isRecommended ? 1 : 0;
-
-  const sql = `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
-
   db.run(
-    sql,
-    [id, name, description, price, image, category, optionsJson, recommended],
+    `UPDATE Menus SET name=?, description=?, price=?, image=?, category=? WHERE id=?`,
+    [name, description, price, image, category, id],
     function (err) {
-      if (err) {
-        console.error("Menu create error:", err.message);
-        return res.status(500).json({ error: err.message });
-      }
-      res.status(201).json({ message: "Menu created", id });
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0)
+        return res.status(404).json({ error: "該当メニューがありません" });
+
+      res.json({
+        message: "メニューを更新しました",
+        menu: { id, name, description, price, image, category },
+      });
     }
   );
 });
 
-// 3. メニュー更新 (PUT) ★新規追加
-app.put("/api/menu/:id", (req, res) => {
-  const menuId = req.params.id;
-  const { name, description, price, image, category, options, isRecommended } =
-    req.body;
-
-  // 更新する項目だけをSQLに組み込む
-  let updates = [];
-  let params = [];
-
-  if (name !== undefined) {
-    updates.push("name = ?");
-    params.push(name);
-  }
-  if (description !== undefined) {
-    updates.push("description = ?");
-    params.push(description);
-  }
-  if (price !== undefined) {
-    updates.push("price = ?");
-    params.push(price);
-  }
-  if (image !== undefined) {
-    updates.push("image = ?");
-    params.push(image);
-  }
-  if (category !== undefined) {
-    updates.push("category = ?");
-    params.push(category);
-  }
-  if (options !== undefined) {
-    updates.push("options = ?");
-    params.push(JSON.stringify(options));
-  }
-  if (isRecommended !== undefined) {
-    updates.push("isRecommended = ?");
-    params.push(isRecommended ? 1 : 0);
-  }
-
-  if (updates.length === 0)
-    return res.status(400).json({ error: "No fields to update" });
-
-  const sql = `UPDATE Menus SET ${updates.join(", ")} WHERE id = ?`;
-  params.push(menuId);
-
-  db.run(sql, params, function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0)
-      return res.status(404).json({ error: "Menu not found" });
-    res.json({ message: "Menu updated", id: menuId });
-  });
-});
-
-// 4. メニュー削除 (DELETE) ★新規追加
+// メニュー削除
 app.delete("/api/menu/:id", (req, res) => {
-  const menuId = req.params.id;
-  db.run("DELETE FROM Menus WHERE id = ?", menuId, function (err) {
+  const { id } = req.params;
+
+  db.run(`DELETE FROM Menus WHERE id=?`, [id], function (err) {
     if (err) return res.status(500).json({ error: err.message });
     if (this.changes === 0)
-      return res.status(404).json({ error: "Menu not found" });
-    res.json({ message: "Menu deleted", id: menuId });
+      return res.status(404).json({ error: "該当メニューがありません" });
+
+    res.json({ message: "メニューを削除しました", id });
   });
 });
 
-// --- 注文関連 API ---
+//追加ここまで
 
 app.post("/api/orders", (req, res) => {
   const { tableNumber, items } = req.body;
@@ -335,6 +274,8 @@ app.get("/api/tables", (req, res) => {
   );
 });
 
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Server running at http://0.0.0.0:${port}/`);
-});
+app.use("/images", express.static(path.join(__dirname, "assets")));
+
+// メニューAPI等は省略（変更なし）
+
+app.listen(port, "0.0.0.0", () => {});
