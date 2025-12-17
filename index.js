@@ -121,35 +121,65 @@ app.get("/api/menu", (req, res) => {
 });
 
 // 2. メニュー追加 (★ここが重要：新規作成用)
-app.post("/api/menu", (req, res) => {
-  const { id, name, description, price, image, category, isRecommended } =
-    req.body;
 
-  // 簡単なバリデーション
-  if (!id || !name || !category || price === undefined) {
-    return res.status(400).json({ error: "必須項目が不足しています" });
-  }
+const multer = require("multer");
+const upload = multer({ dest: path.join(__dirname, "assets") });
 
-  const stmt = db.prepare(
-    `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  );
+app.post("/api/menu", upload.single("imageFile"), (req, res) => {
+  try {
+    const body = req.body || {}; // undefined 回避
+    const file = req.file;
 
-  stmt.run(
-    id,
-    name,
-    description,
-    price,
-    image,
-    category,
-    JSON.stringify([]), // オプションは一旦空で
-    isRecommended ? 1 : 0,
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ message: "メニューを追加しました", id });
+    const id = body.id;
+    const name = body.name;
+    const description = body.description || "";
+    const price = parseFloat(body.price);
+    const category = body.category;
+    const isRecommended = body.isRecommended === "true" || body.isRecommended === "1";
+    
+    // optionsはJSON文字列で送られてくる想定
+    let options = [];
+    if (body.options) {
+      try {
+        options = JSON.parse(body.options);
+      } catch (e) {
+        return res.status(400).json({ error: "options が正しいJSONではありません" });
+      }
     }
-  );
-  stmt.finalize();
+
+    if (!id || !name || !category || isNaN(price)) {
+      return res.status(400).json({ error: "必須項目が不足しています" });
+    }
+
+    const stmt = db.prepare(
+      `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    stmt.run(
+      id,
+      name,
+      description,
+      price,
+      file ? file.filename : "",
+      category,
+      JSON.stringify(options),
+      isRecommended ? 1 : 0,
+      function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ message: "メニューを追加しました", id });
+      }
+    );
+
+    stmt.finalize();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
+
+
+
 
 // 3. メニュー編集 (★修正: isRecommendedも更新できるように)
 app.put("/api/menu/:id", (req, res) => {
