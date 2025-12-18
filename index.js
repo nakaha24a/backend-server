@@ -135,15 +135,18 @@ app.post("/api/menu", upload.single("imageFile"), (req, res) => {
     const description = body.description || "";
     const price = parseFloat(body.price);
     const category = body.category;
-    const isRecommended = body.isRecommended === "true" || body.isRecommended === "1";
-    
+    const isRecommended =
+      body.isRecommended === "true" || body.isRecommended === "1";
+
     // optionsはJSON文字列で送られてくる想定
     let options = [];
     if (body.options) {
       try {
         options = JSON.parse(body.options);
       } catch (e) {
-        return res.status(400).json({ error: "options が正しいJSONではありません" });
+        return res
+          .status(400)
+          .json({ error: "options が正しいJSONではありません" });
       }
     }
 
@@ -177,9 +180,6 @@ app.post("/api/menu", upload.single("imageFile"), (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-
-
 
 // 3. メニュー編集 (★修正: isRecommendedも更新できるように)
 app.put("/api/menu/:id", (req, res) => {
