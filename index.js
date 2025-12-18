@@ -1,9 +1,10 @@
-/* backend-server/index.js - 完全修正版 */
+/* backend-server/index.js - 100点満点版 */
 const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 const fs = require("fs");
+const multer = require("multer"); // ★ここでも必要なので上に移動してもOK
 
 const app = express();
 const port = 3000;
@@ -25,6 +26,21 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
     initDatabase();
   }
 });
+
+// ★修正ポイント: ファイル保存設定（拡張子を維持する設定）
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    // assetsフォルダに保存
+    cb(null, path.join(__dirname, "assets"));
+  },
+  filename: function (req, file, cb) {
+    // ファイル名が重複しないように現在時刻をつける + 元のファイル名（拡張子付き）を使う
+    // 例: 17123456789-Pizza.jpeg
+    const uniqueSuffix = Date.now();
+    cb(null, uniqueSuffix + "-" + file.originalname);
+  },
+});
+const upload = multer({ storage: storage });
 
 function initDatabase() {
   db.serialize(() => {
@@ -120,11 +136,7 @@ app.get("/api/menu", (req, res) => {
   });
 });
 
-// 2. メニュー追加 (★ここが重要：新規作成用)
-
-const multer = require("multer");
-const upload = multer({ dest: path.join(__dirname, "assets") });
-
+// 2. メニュー追加
 app.post("/api/menu", upload.single("imageFile"), (req, res) => {
   try {
     const body = req.body || {}; // undefined 回避
@@ -164,7 +176,8 @@ app.post("/api/menu", upload.single("imageFile"), (req, res) => {
       name,
       description,
       price,
-      file ? file.filename : "",
+      // ファイルがあればその名前、なければ送信されたimage文字列
+      file ? file.filename : body.image || "",
       category,
       JSON.stringify(options),
       isRecommended ? 1 : 0,
