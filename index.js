@@ -107,6 +107,7 @@ app.get("/api/menu", (req, res) => {
       // データの整形
       const formattedItem = {
         ...item,
+        image: item.image  || null,
         options: JSON.parse(item.options || "[]"),
         isRecommended: item.isRecommended === 1, // 0/1 を true/false に変換
       };
@@ -144,10 +145,10 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
     let options = [];
     if (body.options) options = JSON.parse(body.options);
 
-    let imageName = "";
+    let imageName = null;
 
     if (file) {
-      const rootDir = path.resolve(__dirname, "..");
+      const rootDir = path.resolve(__dirname, "assets");
 
       const backendDir = path.join(rootDir, "backend-server/assets");
       const frontendDir = path.join(
@@ -155,12 +156,18 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
         "frontend-admin/kds-app/public/assets"
       );
 
+      
+
       [backendDir, frontendDir].forEach((dir) => {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       });
 
       // ★ jpeg 拡張子
-      imageName = `menu_${id}.jpeg`;
+      if (file) {
+        const fileName = `${id}.jpeg`;
+        imageName = `/assets/${fileName}`;
+      }
+      
 
       const jpegBuffer = await sharp(file.buffer)
         .jpeg({ quality: 80 })
@@ -201,29 +208,41 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
 
 // メニュー更新 API
 
-app.put("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
+app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
+   
   try {
     const { id } = req.params;
-    const body = req.body;
+    const body = req.body || {};
     const file = req.file;
 
-    const name = body.name;
-    const description = body.description || "";
-    const price = parseFloat(body.price);
-    const category = body.category;
-    const isRecommended =
-      body.isRecommended === "true" || body.isRecommended === "1";
+    const name = body.name ?? null;
+    const description = body.description ?? null;
+    const price = body.price && !isNaN(parseFloat(body.price))
+        ? parseFloat(body.price)
+        : null;
+    const category = body.category ?? null;
 
-    if (!name || !category || isNaN(price)) {
-      return res.status(400).json({ error: "必須項目が不足しています" });
+    const isRecommended = body.isRecommended !== undefined
+        ? body.isRecommended === "true" || body.isRecommended === "1"
+        : null;
+
+    const hasUpdate =
+      body.name !== undefined ||
+      body.description !== undefined ||
+      body.price !== undefined ||
+      body.category !== undefined ||
+      body.isRecommended !== undefined ||
+      file;
+
+    if (!hasUpdate) {
+      return res.status(400).json({ error: "更新内容がありません" });
     }
 
-    let imageName = body.image || "";
+    let imageName = body.image ?? null;
 
     if (file) {
       const rootDir = path.resolve(__dirname, "..");
-
-      const backendDir = path.join(rootDir, "backend-server/assets");
+      const backendDir = path.join(__dirname, "assets");
       const frontendDir = path.join(
         rootDir,
         "frontend-admin/kds-app/public/assets"
@@ -233,7 +252,6 @@ app.put("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       });
 
-      // ★ jpeg 拡張子
       imageName = `menu_${id}.jpeg`;
 
       const jpegBuffer = await sharp(file.buffer)
@@ -245,28 +263,38 @@ app.put("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
     }
 
     db.run(
-      `UPDATE Menus
-       SET name=?, description=?, price=?, image=?, category=?, isRecommended=?
-       WHERE id=?`,
+      `UPDATE Menus SET
+        name = COALESCE(?, name),
+        description = COALESCE(?, description),
+        price = COALESCE(?, price),
+        image = COALESCE(?, image),
+        category = COALESCE(?, category),
+        isRecommended = COALESCE(?, isRecommended)
+      WHERE id = ?`,
       [
         name,
         description,
         price,
         imageName,
         category,
-        isRecommended ? 1 : 0,
+        isRecommended === null ? null : isRecommended ? 1 : 0,
         id,
       ],
       function (err) {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+          console.error("DB error:", err);
+          return res.status(500).json({ error: err.message });
+        }
         res.json({ message: "メニュー更新完了" });
       }
     );
   } catch (err) {
-    console.error(err);
+    console.error("POST error:", err);
     res.status(500).json({ error: "メニュー更新失敗" });
   }
 });
+
+
 
 
 // 4. メニュー削除
