@@ -122,7 +122,7 @@ app.get("/api/menu", (req, res) => {
 });
 
 
-// 2. メニュー追加 (★ここが重要：新規作成用)
+// 2. メニュー追加 
 
 const sharp = require("sharp");
 const multer = require("multer");
@@ -148,14 +148,15 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
     let imageName = null;
 
     if (file) {
-      const rootDir = path.resolve(__dirname, "assets");
-
-      const backendDir = path.join(rootDir, "backend-server/assets");
+      const backendDir = path.join(__dirname, "assets");
       const frontendDir = path.join(
-        rootDir,
-        "frontend-admin/kds-app/public/assets"
+        __dirname,
+        "..",
+        "frontend-admin",
+        "kds-app",
+        "public",
+        "assets"
       );
-
       
 
       [backendDir, frontendDir].forEach((dir) => {
@@ -164,17 +165,18 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
 
       // ★ jpeg 拡張子
       if (file) {
-        const fileName = `${id}.jpeg`;
-        imageName = `/assets/${fileName}`;
-      }
+        const safeFileName = file.originalname.replace(/\s/g, "_");
+        imageName = `/assets/${safeFileName}`;
       
+        const jpegBuffer = await sharp(file.buffer)
+          .jpeg({ quality: 80 })
+          .toBuffer();
 
-      const jpegBuffer = await sharp(file.buffer)
-        .jpeg({ quality: 80 })
-        .toBuffer();
+        fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
+        fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
 
-      fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
-      fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
+        console.log("originalname:", file.originalname);
+      }
     }
 
     db.run(
@@ -204,27 +206,25 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
 
 
 
-// 3. メニュー編集 (★修正: isRecommendedも更新できるように)
+// 3. メニュー編集 
 
 // メニュー更新 API
-
 app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
-   
   try {
     const { id } = req.params;
     const body = req.body || {};
     const file = req.file;
 
+    // 更新対象を取得
     const name = body.name ?? null;
     const description = body.description ?? null;
     const price = body.price && !isNaN(parseFloat(body.price))
-        ? parseFloat(body.price)
-        : null;
+      ? parseFloat(body.price)
+      : null;
     const category = body.category ?? null;
-
     const isRecommended = body.isRecommended !== undefined
-        ? body.isRecommended === "true" || body.isRecommended === "1"
-        : null;
+      ? body.isRecommended === "true" || body.isRecommended === "1"
+      : null;
 
     const hasUpdate =
       body.name !== undefined ||
@@ -241,27 +241,43 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
     let imageName = body.image ?? null;
 
     if (file) {
-      const rootDir = path.resolve(__dirname, "..");
       const backendDir = path.join(__dirname, "assets");
       const frontendDir = path.join(
-        rootDir,
-        "frontend-admin/kds-app/public/assets"
+        __dirname,
+        "..",
+        "frontend-admin",
+        "kds-app",
+        "public",
+        "assets"
       );
 
+      // ディレクトリ作成
       [backendDir, frontendDir].forEach((dir) => {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       });
 
-      imageName = `menu_${id}.jpeg`;
+      // 元ファイル名を安全に
+      const safeFileName = file.originalname.replace(/\s/g, "_");
 
+      // 同名ファイルがあれば警告
+      if (fs.existsSync(path.join(backendDir, safeFileName))) {
+        return res.status(400).json({ error: "同名の画像ファイルがすでに存在します" });
+      }
+
+      imageName = `/assets/${safeFileName}`;
+
+      // sharp で JPEG に変換して保存
       const jpegBuffer = await sharp(file.buffer)
         .jpeg({ quality: 80 })
         .toBuffer();
 
-      fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
-      fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
+      fs.writeFileSync(path.join(backendDir, safeFileName), jpegBuffer);
+      fs.writeFileSync(path.join(frontendDir, safeFileName), jpegBuffer);
+
+      console.log("アップロード画像:", file.originalname);
     }
 
+    // DB 更新
     db.run(
       `UPDATE Menus SET
         name = COALESCE(?, name),
@@ -280,7 +296,7 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         isRecommended === null ? null : isRecommended ? 1 : 0,
         id,
       ],
-      function (err) {
+      function(err) {
         if (err) {
           console.error("DB error:", err);
           return res.status(500).json({ error: err.message });
@@ -288,11 +304,13 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         res.json({ message: "メニュー更新完了" });
       }
     );
+
   } catch (err) {
     console.error("POST error:", err);
     res.status(500).json({ error: "メニュー更新失敗" });
   }
 });
+
 
 
 
