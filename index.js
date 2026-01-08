@@ -1,14 +1,15 @@
-/* backend-server/index.js - HTTPS対応版 */
+/* backend-server/index.js - HTTPS + メンバー機能統合版 */
 const express = require("express");
-const https = require("https"); // ★追加: HTTPS用
+const https = require("https"); // HTTPS用
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const sharp = require("sharp"); // ★メンバー追加: 画像処理用
 
 const app = express();
-const port = 443; // ★変更: HTTPSの標準ポート
+const port = 443; // ★HTTPSポート
 
 app.use(cors());
 app.use(express.json());
@@ -23,23 +24,13 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
   if (err) {
     console.error("Database connection error:", err.message);
   } else {
-    // ログも https に変更
     console.log(`データベースに接続しました`);
     initDatabase();
   }
 });
 
-// ファイル保存設定
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, "assets"));
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now();
-    cb(null, uniqueSuffix + "-" + file.originalname);
-  },
-});
-const upload = multer({ storage: storage });
+// ★修正: メンバーのコードに合わせてメモリ保存に変更（sharpで加工するため）
+const upload = multer({ storage: multer.memoryStorage() });
 
 function initDatabase() {
   db.serialize(() => {
@@ -133,12 +124,7 @@ app.get("/api/menu", (req, res) => {
   });
 });
 
-// 2. メニュー追加 (★ここが重要：新規作成用)
-
-const sharp = require("sharp");
-const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage() });
-
+// 2. メニュー追加 (★メンバー機能: sharp対応版)
 app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
   try {
     const body = req.body || {};
@@ -159,30 +145,45 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
     let imageName = null;
 
     if (file) {
-      const rootDir = path.resolve(__dirname, "assets");
+      const rootDir = path.resolve(__dirname, "assets"); // assetsフォルダの絶対パス
 
-      const backendDir = path.join(rootDir, "backend-server/assets");
+      // 保存先1: バックエンド自身のassets
+      const backendDir = path.join(__dirname, "assets");
+
+      // 保存先2: フロントエンド(管理画面)のpublic/assets (※フォルダ構成によりパス調整が必要な場合あり)
+      // メンバーのコードにあったパス設定を使用
+      const rootProjectDir = path.resolve(__dirname, ".."); // 一つ上の階層へ
       const frontendDir = path.join(
-        rootDir,
+        rootProjectDir,
         "frontend-admin/kds-app/public/assets"
       );
 
+      // 両方のフォルダがなければ作る
       [backendDir, frontendDir].forEach((dir) => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        // frontendDirへのパスが見つからない場合のエラー回避
+        try {
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        } catch (e) {
+          console.warn(`フォルダ作成スキップ: ${dir}`);
+        }
       });
 
-      // ★ jpeg 拡張子
-      if (file) {
-        const fileName = `${id}.jpeg`;
-        imageName = `/assets/${fileName}`;
-      }
+      // 画像ファイル名の決定
+      imageName = `assets/${id}.jpeg`; // DBにはパスとして保存
+      const fileNameOnly = `${id}.jpeg`;
 
+      // sharpで変換して保存
       const jpegBuffer = await sharp(file.buffer)
         .jpeg({ quality: 80 })
         .toBuffer();
 
-      fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
-      fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
+      // バックエンドへ保存
+      fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+
+      // フロントエンドへ保存 (フォルダが存在する場合のみ)
+      if (fs.existsSync(frontendDir)) {
+        fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
+      }
     }
 
     db.run(
@@ -210,10 +211,7 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
   }
 });
 
-// 3. メニュー編集 (★修正: isRecommendedも更新できるように)
-
-// メニュー更新 API
-
+// 3. メニュー編集 (★メンバー機能: 画像更新対応)
 app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
   try {
     const { id } = req.params;
@@ -248,27 +246,34 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
     let imageName = body.image ?? null;
 
     if (file) {
-      const rootDir = path.resolve(__dirname, "..");
+      // 保存先の定義（追加時と同じロジック）
+      const rootProjectDir = path.resolve(__dirname, "..");
       const backendDir = path.join(__dirname, "assets");
       const frontendDir = path.join(
-        rootDir,
+        rootProjectDir,
         "frontend-admin/kds-app/public/assets"
       );
 
       [backendDir, frontendDir].forEach((dir) => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        try {
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        } catch (e) {}
       });
 
-      imageName = `menu_${id}.jpeg`;
+      const fileNameOnly = `${id}.jpeg`;
+      imageName = `assets/${fileNameOnly}`;
 
       const jpegBuffer = await sharp(file.buffer)
         .jpeg({ quality: 80 })
         .toBuffer();
 
-      fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
-      fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
+      fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+      if (fs.existsSync(frontendDir)) {
+        fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
+      }
     }
 
+    // SQL構築 (COALESCEを使って、値がある場合のみ更新)
     db.run(
       `UPDATE Menus SET
         name = COALESCE(?, name),
@@ -342,7 +347,7 @@ app.post("/api/orders", (req, res) => {
   );
 });
 
-// 6. 注文取得 (Resto-app用: 自分のテーブルの注文)
+// 6. 注文取得
 app.get("/api/orders", (req, res) => {
   const tableNumber = req.query.tableNumber;
   db.all(
@@ -360,7 +365,7 @@ app.get("/api/orders", (req, res) => {
   );
 });
 
-// 7. KDS用 注文一覧 (全テーブル)
+// 7. KDS用 注文一覧
 app.get("/api/kitchen/orders", (req, res) => {
   const sql = `SELECT * FROM orders 
                WHERE status IN ('注文受付', '調理中', '調理完了', '提供済み', '呼び出し')
@@ -430,11 +435,10 @@ app.get("/api/tables", (req, res) => {
 });
 
 /* ========================================================== */
-/* ★ HTTPSサーバー起動設定 (ポート443)  */
+/* ★ HTTPSサーバー起動 (ここが重要！) */
 /* ========================================================== */
 
 // 証明書ファイルの読み込み
-// ※ server.key と server.crt がこのファイルと同じ場所にある前提です
 const sslOptions = {
   key: fs.readFileSync(path.join(__dirname, "server.key")),
   cert: fs.readFileSync(path.join(__dirname, "server.crt")),
