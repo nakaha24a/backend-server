@@ -1,17 +1,20 @@
-/* backend-server/index.js - 完全修正版 */
+/* backend-server/index.js - HTTPS + メンバー機能統合版 */
 const express = require("express");
+const https = require("https"); // HTTPS用
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 const fs = require("fs");
+const multer = require("multer");
+const sharp = require("sharp"); // ★メンバー追加: 画像処理用
 
 const app = express();
-const port = 3000;
+const port = 443; // ★HTTPSポート
 
 app.use(cors());
 app.use(express.json());
 
-// 画像などを置くassetsフォルダを公開 (複数のパスに対応)
+// 画像などを置くassetsフォルダを公開
 app.use("/static", express.static("assets"));
 app.use("/assets", express.static(path.join(__dirname, "assets")));
 app.use("/images", express.static(path.join(__dirname, "assets")));
@@ -21,10 +24,13 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
   if (err) {
     console.error("Database connection error:", err.message);
   } else {
-    console.log(`サーバーが http://localhost:${port} で起動しました`);
+    console.log(`データベースに接続しました`);
     initDatabase();
   }
 });
+
+// ★修正: メンバーのコードに合わせてメモリ保存に変更（sharpで加工するため）
+const upload = multer({ storage: multer.memoryStorage() });
 
 function initDatabase() {
   db.serialize(() => {
@@ -54,7 +60,6 @@ function initDatabase() {
         )`,
       (err) => {
         if (!err) {
-          // データが空なら初期データをロード
           db.get("SELECT COUNT(*) as count FROM Menus", (err, row) => {
             if (row && row.count === 0) loadInitialMenuData();
           });
@@ -101,15 +106,13 @@ app.get("/api/menu", (req, res) => {
   db.all("SELECT * FROM Menus", [], (err, rows) => {
     if (err) return res.status(500).json({ error: "Database error" });
 
-    // カテゴリごとにまとめる処理
     const categoriesMap = new Map();
     rows.forEach((item) => {
-      // データの整形
       const formattedItem = {
         ...item,
-        image: item.image  || null,
+        image: item.image || null,
         options: JSON.parse(item.options || "[]"),
-        isRecommended: item.isRecommended === 1, // 0/1 を true/false に変換
+        isRecommended: item.isRecommended === 1,
       };
 
       if (!categoriesMap.has(item.category)) {
@@ -121,13 +124,7 @@ app.get("/api/menu", (req, res) => {
   });
 });
 
-
-// 2. メニュー追加 
-
-const sharp = require("sharp");
-const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage() });
-
+// 2. メニュー追加 (★メンバー機能: sharp対応版)
 app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
   try {
     const body = req.body || {};
@@ -148,7 +145,14 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
     let imageName = null;
 
     if (file) {
+      
+
+      // 保存先1: バックエンド自身のassets
       const backendDir = path.join(__dirname, "assets");
+
+      // 保存先2: フロントエンド(管理画面)のpublic/assets (※フォルダ構成によりパス調整が必要な場合あり)
+      
+      
       const frontendDir = path.join(
         __dirname,
         "..",
@@ -157,13 +161,19 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
         "public",
         "assets"
       );
-      
 
+
+      // 両方のフォルダがなければ作る
       [backendDir, frontendDir].forEach((dir) => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        // frontendDirへのパスが見つからない場合のエラー回避
+        try {
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        } catch (e) {
+          console.warn(`フォルダ作成スキップ: ${dir}`);
+        }
       });
 
-      // ★ jpeg 拡張子
+      // 画像ファイル名の決定
       if (file) {
         const safeFileName = file.originalname.replace(/\s/g, "_");
         imageName = `/assets/${safeFileName}`;
@@ -172,10 +182,16 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
           .jpeg({ quality: 80 })
           .toBuffer();
 
-        fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
-        fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
 
-        console.log("originalname:", file.originalname);
+      // バックエンドへ保存
+      fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+
+      // フロントエンドへ保存 (フォルダが存在する場合のみ)
+      if (fs.existsSync(frontendDir)) {
+        fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
+      }
+
+      console.log("originalname:", file.originalname);
       }
     }
 
@@ -204,27 +220,25 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
   }
 });
 
-
-
-// 3. メニュー編集 
-
-// メニュー更新 API
+// 3. メニュー編集 (★メンバー機能: 画像更新対応)
 app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
     const file = req.file;
 
-    // 更新対象を取得
     const name = body.name ?? null;
     const description = body.description ?? null;
-    const price = body.price && !isNaN(parseFloat(body.price))
-      ? parseFloat(body.price)
-      : null;
+    const price =
+      body.price && !isNaN(parseFloat(body.price))
+        ? parseFloat(body.price)
+        : null;
     const category = body.category ?? null;
-    const isRecommended = body.isRecommended !== undefined
-      ? body.isRecommended === "true" || body.isRecommended === "1"
-      : null;
+
+    const isRecommended =
+      body.isRecommended !== undefined
+        ? body.isRecommended === "true" || body.isRecommended === "1"
+        : null;
 
     const hasUpdate =
       body.name !== undefined ||
@@ -241,6 +255,7 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
     let imageName = body.image ?? null;
 
     if (file) {
+      // 保存先の定義（追加時と同じロジック）
       const backendDir = path.join(__dirname, "assets");
       const frontendDir = path.join(
         __dirname,
@@ -251,9 +266,10 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         "assets"
       );
 
-      // ディレクトリ作成
       [backendDir, frontendDir].forEach((dir) => {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        try {
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        } catch (e) {}
       });
 
       // 元ファイル名を安全に
@@ -271,13 +287,13 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         .jpeg({ quality: 80 })
         .toBuffer();
 
-      fs.writeFileSync(path.join(backendDir, safeFileName), jpegBuffer);
-      fs.writeFileSync(path.join(frontendDir, safeFileName), jpegBuffer);
-
-      console.log("アップロード画像:", file.originalname);
+      fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+      if (fs.existsSync(frontendDir)) {
+        fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
+      }
     }
 
-    // DB 更新
+    // SQL構築 (COALESCEを使って、値がある場合のみ更新)
     db.run(
       `UPDATE Menus SET
         name = COALESCE(?, name),
@@ -296,7 +312,7 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         isRecommended === null ? null : isRecommended ? 1 : 0,
         id,
       ],
-      function(err) {
+      function (err) {
         if (err) {
           console.error("DB error:", err);
           return res.status(500).json({ error: err.message });
@@ -304,16 +320,11 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         res.json({ message: "メニュー更新完了" });
       }
     );
-
   } catch (err) {
     console.error("POST error:", err);
     res.status(500).json({ error: "メニュー更新失敗" });
   }
 });
-
-
-
-
 
 // 4. メニュー削除
 app.delete("/api/menu/:id", (req, res) => {
@@ -326,7 +337,6 @@ app.delete("/api/menu/:id", (req, res) => {
   });
 });
 
-
 // 5. 注文作成
 app.post("/api/orders", (req, res) => {
   const { tableNumber, items } = req.body;
@@ -336,7 +346,6 @@ app.post("/api/orders", (req, res) => {
 
   const itemsJson = JSON.stringify(items);
   const timestamp = new Date().toISOString();
-  // 合計金額の計算
   const totalPrice = items.reduce(
     (sum, i) => sum + (i.totalPrice || i.price * i.quantity),
     0
@@ -358,8 +367,7 @@ app.post("/api/orders", (req, res) => {
   );
 });
 
-
-// 6. 注文取得 (Resto-app用: 自分のテーブルの注文)
+// 6. 注文取得
 app.get("/api/orders", (req, res) => {
   const tableNumber = req.query.tableNumber;
   db.all(
@@ -368,7 +376,6 @@ app.get("/api/orders", (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
 
-      // items文字列をJSONに戻して返す
       const formattedRows = rows.map((row) => ({
         ...row,
         items: JSON.parse(row.items || "[]"),
@@ -378,8 +385,7 @@ app.get("/api/orders", (req, res) => {
   );
 });
 
-
-// 7. KDS用 注文一覧 (全テーブル)
+// 7. KDS用 注文一覧
 app.get("/api/kitchen/orders", (req, res) => {
   const sql = `SELECT * FROM orders 
                WHERE status IN ('注文受付', '調理中', '調理完了', '提供済み', '呼び出し')
@@ -394,7 +400,6 @@ app.get("/api/kitchen/orders", (req, res) => {
     res.json(formattedRows);
   });
 });
-
 
 // 8. ステータス更新
 app.put("/api/orders/:id/status", (req, res) => {
@@ -424,7 +429,6 @@ app.put("/api/orders/:id/status", (req, res) => {
   );
 });
 
-
 // 9. 呼び出し機能
 app.post("/api/call", (req, res) => {
   const { tableNumber } = req.body;
@@ -438,7 +442,6 @@ app.post("/api/call", (req, res) => {
   );
 });
 
-
 // 10. テーブル一覧取得
 app.get("/api/tables", (req, res) => {
   db.all(
@@ -451,6 +454,19 @@ app.get("/api/tables", (req, res) => {
   );
 });
 
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Server running on port ${port}`);
+/* ========================================================== */
+/* ★ HTTPSサーバー起動 (ここが重要！) */
+/* ========================================================== */
+
+// 証明書ファイルの読み込み
+const sslOptions = {
+  key: fs.readFileSync(path.join(__dirname, "server.key")),
+  cert: fs.readFileSync(path.join(__dirname, "server.crt")),
+};
+
+// HTTPSサーバーを起動
+https.createServer(sslOptions, app).listen(port, "0.0.0.0", () => {
+  console.log(
+    `HTTPS Server running on port ${port} (https://localhost:${port})`
+  );
 });
