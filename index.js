@@ -119,6 +119,7 @@ app.get("/api/menu", (req, res) => {
     rows.forEach((item) => {
       const formattedItem = {
         ...item,
+        image: item.image || null,
         options: JSON.parse(item.options || "[]"),
         isRecommended: item.isRecommended === 1,
       };
@@ -132,85 +133,172 @@ app.get("/api/menu", (req, res) => {
   });
 });
 
-// 2. メニュー追加
-app.post("/api/menu", upload.single("imageFile"), (req, res) => {
+// 2. メニュー追加 (★ここが重要：新規作成用)
+
+const sharp = require("sharp");
+const multer = require("multer");
+const upload = multer({ storage: multer.memoryStorage() });
+
+app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
   try {
     const body = req.body || {};
     const file = req.file;
 
-    const id = body.id;
-    const name = body.name;
-    const description = body.description || "";
+    const { id, name, description = "", category } = body;
     const price = parseFloat(body.price);
-    const category = body.category;
     const isRecommended =
       body.isRecommended === "true" || body.isRecommended === "1";
-
-    let options = [];
-    if (body.options) {
-      try {
-        options = JSON.parse(body.options);
-      } catch (e) {
-        return res
-          .status(400)
-          .json({ error: "options が正しいJSONではありません" });
-      }
-    }
 
     if (!id || !name || !category || isNaN(price)) {
       return res.status(400).json({ error: "必須項目が不足しています" });
     }
 
-    const stmt = db.prepare(
-      `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    );
+    let options = [];
+    if (body.options) options = JSON.parse(body.options);
 
-    stmt.run(
-      id,
-      name,
-      description,
-      price,
-      file ? file.filename : body.image || "",
-      category,
-      JSON.stringify(options),
-      isRecommended ? 1 : 0,
-      function (err) {
+    let imageName = null;
+
+    if (file) {
+      const rootDir = path.resolve(__dirname, "assets");
+
+      const backendDir = path.join(rootDir, "backend-server/assets");
+      const frontendDir = path.join(
+        rootDir,
+        "frontend-admin/kds-app/public/assets"
+      );
+
+      [backendDir, frontendDir].forEach((dir) => {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      });
+
+      // ★ jpeg 拡張子
+      if (file) {
+        const fileName = `${id}.jpeg`;
+        imageName = `/assets/${fileName}`;
+      }
+
+      const jpegBuffer = await sharp(file.buffer)
+        .jpeg({ quality: 80 })
+        .toBuffer();
+
+      fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
+      fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
+    }
+
+    db.run(
+      `INSERT INTO Menus
+       (id, name, description, price, image, category, options, isRecommended)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        name,
+        description,
+        price,
+        imageName,
+        category,
+        JSON.stringify(options),
+        isRecommended ? 1 : 0,
+      ],
+      (err) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.status(201).json({ message: "メニューを追加しました", id });
+        res.status(201).json({ message: "メニューを追加しました" });
       }
     );
-
-    stmt.finalize();
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "メニュー作成失敗" });
   }
 });
 
-// 3. メニュー編集
-app.put("/api/menu/:id", (req, res) => {
-  const { id } = req.params;
-  const { name, description, price, image, category, isRecommended } = req.body;
+// 3. メニュー編集 (★修正: isRecommendedも更新できるように)
 
-  if (!name || !category || price === undefined) {
-    return res.status(400).json({ error: "name, category, price は必須です" });
-  }
+// メニュー更新 API
 
-  db.run(
-    `UPDATE Menus SET name=?, description=?, price=?, image=?, category=?, isRecommended=? WHERE id=?`,
-    [name, description, price, image, category, isRecommended ? 1 : 0, id],
-    function (err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0)
-        return res.status(404).json({ error: "該当メニューがありません" });
+app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const body = req.body || {};
+    const file = req.file;
 
-      res.json({
-        message: "メニューを更新しました",
-        menu: { id, name, description, price, image, category, isRecommended },
-      });
+    const name = body.name ?? null;
+    const description = body.description ?? null;
+    const price =
+      body.price && !isNaN(parseFloat(body.price))
+        ? parseFloat(body.price)
+        : null;
+    const category = body.category ?? null;
+
+    const isRecommended =
+      body.isRecommended !== undefined
+        ? body.isRecommended === "true" || body.isRecommended === "1"
+        : null;
+
+    const hasUpdate =
+      body.name !== undefined ||
+      body.description !== undefined ||
+      body.price !== undefined ||
+      body.category !== undefined ||
+      body.isRecommended !== undefined ||
+      file;
+
+    if (!hasUpdate) {
+      return res.status(400).json({ error: "更新内容がありません" });
     }
-  );
+
+    let imageName = body.image ?? null;
+
+    if (file) {
+      const rootDir = path.resolve(__dirname, "..");
+      const backendDir = path.join(__dirname, "assets");
+      const frontendDir = path.join(
+        rootDir,
+        "frontend-admin/kds-app/public/assets"
+      );
+
+      [backendDir, frontendDir].forEach((dir) => {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      });
+
+      imageName = `menu_${id}.jpeg`;
+
+      const jpegBuffer = await sharp(file.buffer)
+        .jpeg({ quality: 80 })
+        .toBuffer();
+
+      fs.writeFileSync(path.join(backendDir, imageName), jpegBuffer);
+      fs.writeFileSync(path.join(frontendDir, imageName), jpegBuffer);
+    }
+
+    db.run(
+      `UPDATE Menus SET
+        name = COALESCE(?, name),
+        description = COALESCE(?, description),
+        price = COALESCE(?, price),
+        image = COALESCE(?, image),
+        category = COALESCE(?, category),
+        isRecommended = COALESCE(?, isRecommended)
+      WHERE id = ?`,
+      [
+        name,
+        description,
+        price,
+        imageName,
+        category,
+        isRecommended === null ? null : isRecommended ? 1 : 0,
+        id,
+      ],
+      function (err) {
+        if (err) {
+          console.error("DB error:", err);
+          return res.status(500).json({ error: err.message });
+        }
+        res.json({ message: "メニュー更新完了" });
+      }
+    );
+  } catch (err) {
+    console.error("POST error:", err);
+    res.status(500).json({ error: "メニュー更新失敗" });
+  }
 });
 
 // 4. メニュー削除
@@ -254,7 +342,7 @@ app.post("/api/orders", (req, res) => {
   );
 });
 
-// 6. 注文取得
+// 6. 注文取得 (Resto-app用: 自分のテーブルの注文)
 app.get("/api/orders", (req, res) => {
   const tableNumber = req.query.tableNumber;
   db.all(
@@ -272,7 +360,7 @@ app.get("/api/orders", (req, res) => {
   );
 });
 
-// 7. KDS用 注文一覧
+// 7. KDS用 注文一覧 (全テーブル)
 app.get("/api/kitchen/orders", (req, res) => {
   const sql = `SELECT * FROM orders 
                WHERE status IN ('注文受付', '調理中', '調理完了', '提供済み', '呼び出し')
