@@ -1,18 +1,19 @@
-/* backend-server/index.js - 100点満点版 */
+/* backend-server/index.js - HTTPS対応版 */
 const express = require("express");
+const https = require("https"); // ★追加: HTTPS用
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
 const fs = require("fs");
-const multer = require("multer"); // ★ここでも必要なので上に移動してもOK
+const multer = require("multer");
 
 const app = express();
-const port = 3000;
+const port = 443; // ★変更: HTTPSの標準ポート
 
 app.use(cors());
 app.use(express.json());
 
-// 画像などを置くassetsフォルダを公開 (複数のパスに対応)
+// 画像などを置くassetsフォルダを公開
 app.use("/static", express.static("assets"));
 app.use("/assets", express.static(path.join(__dirname, "assets")));
 app.use("/images", express.static(path.join(__dirname, "assets")));
@@ -22,20 +23,18 @@ const db = new sqlite3.Database("./order_system.db", (err) => {
   if (err) {
     console.error("Database connection error:", err.message);
   } else {
-    console.log(`サーバーが http://localhost:${port} で起動しました`);
+    // ログも https に変更
+    console.log(`データベースに接続しました`);
     initDatabase();
   }
 });
 
-// ★修正ポイント: ファイル保存設定（拡張子を維持する設定）
+// ファイル保存設定
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    // assetsフォルダに保存
     cb(null, path.join(__dirname, "assets"));
   },
   filename: function (req, file, cb) {
-    // ファイル名が重複しないように現在時刻をつける + 元のファイル名（拡張子付き）を使う
-    // 例: 17123456789-Pizza.jpeg
     const uniqueSuffix = Date.now();
     cb(null, uniqueSuffix + "-" + file.originalname);
   },
@@ -70,7 +69,6 @@ function initDatabase() {
         )`,
       (err) => {
         if (!err) {
-          // データが空なら初期データをロード
           db.get("SELECT COUNT(*) as count FROM Menus", (err, row) => {
             if (row && row.count === 0) loadInitialMenuData();
           });
@@ -117,14 +115,12 @@ app.get("/api/menu", (req, res) => {
   db.all("SELECT * FROM Menus", [], (err, rows) => {
     if (err) return res.status(500).json({ error: "Database error" });
 
-    // カテゴリごとにまとめる処理
     const categoriesMap = new Map();
     rows.forEach((item) => {
-      // データの整形
       const formattedItem = {
         ...item,
         options: JSON.parse(item.options || "[]"),
-        isRecommended: item.isRecommended === 1, // 0/1 を true/false に変換
+        isRecommended: item.isRecommended === 1,
       };
 
       if (!categoriesMap.has(item.category)) {
@@ -139,7 +135,7 @@ app.get("/api/menu", (req, res) => {
 // 2. メニュー追加
 app.post("/api/menu", upload.single("imageFile"), (req, res) => {
   try {
-    const body = req.body || {}; // undefined 回避
+    const body = req.body || {};
     const file = req.file;
 
     const id = body.id;
@@ -150,7 +146,6 @@ app.post("/api/menu", upload.single("imageFile"), (req, res) => {
     const isRecommended =
       body.isRecommended === "true" || body.isRecommended === "1";
 
-    // optionsはJSON文字列で送られてくる想定
     let options = [];
     if (body.options) {
       try {
@@ -176,7 +171,6 @@ app.post("/api/menu", upload.single("imageFile"), (req, res) => {
       name,
       description,
       price,
-      // ファイルがあればその名前、なければ送信されたimage文字列
       file ? file.filename : body.image || "",
       category,
       JSON.stringify(options),
@@ -194,7 +188,7 @@ app.post("/api/menu", upload.single("imageFile"), (req, res) => {
   }
 });
 
-// 3. メニュー編集 (★修正: isRecommendedも更新できるように)
+// 3. メニュー編集
 app.put("/api/menu/:id", (req, res) => {
   const { id } = req.params;
   const { name, description, price, image, category, isRecommended } = req.body;
@@ -239,7 +233,6 @@ app.post("/api/orders", (req, res) => {
 
   const itemsJson = JSON.stringify(items);
   const timestamp = new Date().toISOString();
-  // 合計金額の計算
   const totalPrice = items.reduce(
     (sum, i) => sum + (i.totalPrice || i.price * i.quantity),
     0
@@ -261,7 +254,7 @@ app.post("/api/orders", (req, res) => {
   );
 });
 
-// 6. 注文取得 (Resto-app用: 自分のテーブルの注文)
+// 6. 注文取得
 app.get("/api/orders", (req, res) => {
   const tableNumber = req.query.tableNumber;
   db.all(
@@ -270,7 +263,6 @@ app.get("/api/orders", (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
 
-      // items文字列をJSONに戻して返す
       const formattedRows = rows.map((row) => ({
         ...row,
         items: JSON.parse(row.items || "[]"),
@@ -280,7 +272,7 @@ app.get("/api/orders", (req, res) => {
   );
 });
 
-// 7. KDS用 注文一覧 (全テーブル)
+// 7. KDS用 注文一覧
 app.get("/api/kitchen/orders", (req, res) => {
   const sql = `SELECT * FROM orders 
                WHERE status IN ('注文受付', '調理中', '調理完了', '提供済み', '呼び出し')
@@ -349,6 +341,20 @@ app.get("/api/tables", (req, res) => {
   );
 });
 
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Server running on port ${port}`);
+/* ========================================================== */
+/* ★ HTTPSサーバー起動設定 (ポート443)  */
+/* ========================================================== */
+
+// 証明書ファイルの読み込み
+// ※ server.key と server.crt がこのファイルと同じ場所にある前提です
+const sslOptions = {
+  key: fs.readFileSync(path.join(__dirname, "server.key")),
+  cert: fs.readFileSync(path.join(__dirname, "server.crt")),
+};
+
+// HTTPSサーバーを起動
+https.createServer(sslOptions, app).listen(port, "0.0.0.0", () => {
+  console.log(
+    `HTTPS Server running on port ${port} (https://localhost:${port})`
+  );
 });
