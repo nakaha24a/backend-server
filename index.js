@@ -9,7 +9,7 @@ const multer = require("multer");
 const sharp = require("sharp"); // ★メンバー追加: 画像処理用
 
 const app = express();
-const port = 443; // ★HTTPSポート
+const port = 3000; // ★HTTPSポート
 
 app.use(cors());
 app.use(express.json());
@@ -459,14 +459,23 @@ app.get("/api/tables", (req, res) => {
 /* ========================================================== */
 
 // 証明書ファイルの読み込み
-const sslOptions = {
-  key: fs.readFileSync(path.join(__dirname, "server.key")),
-  cert: fs.readFileSync(path.join(__dirname, "server.crt")),
-};
+const selfsigned = require("selfsigned");
+
+const attrs = [{ name: "commonName", value: "backend-server" }];
+const pems = selfsigned.generate(attrs, {
+  days: 365,
+  keySize: 2048,
+});
 
 // HTTPSサーバーを起動
-https.createServer(sslOptions, app).listen(port, "0.0.0.0", () => {
-  console.log(
-    `HTTPS Server running on port ${port} (https://localhost:${port})`
-  );
+https.createServer(
+  {
+    key: pems.private,
+    cert: pems.cert,
+  },
+  app
+).listen(port, "0.0.0.0", () => {
+  console.log(`HTTPS Server running`);
 });
+
+
