@@ -152,7 +152,6 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
 
       // 保存先2: フロントエンド(管理画面)のpublic/assets (※フォルダ構成によりパス調整が必要な場合あり)
       
-      
       const frontendDir = path.join(
         __dirname,
         "..",
@@ -175,23 +174,26 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
 
       // 画像ファイル名の決定
       if (file) {
-        const safeFileName = file.originalname.replace(/\s/g, "_");
-        imageName = `/assets/${safeFileName}`;
-      
+        const baseName = path.parse(file.originalname).name;  // 拡張子なし
+        const safeBaseName = baseName.replace(/\s/g, "_");
+        const fileNameOnly = `${safeBaseName}.jpeg`;
+
+        imageName = `/assets/${fileNameOnly}`;
+
         const jpegBuffer = await sharp(file.buffer)
           .jpeg({ quality: 80 })
           .toBuffer();
 
+        // バックエンドへ保存
+        fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
 
-      // バックエンドへ保存
-      fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+        // フロントエンドへ保存
+        if (fs.existsSync(frontendDir)) {
+          fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
+        }
 
-      // フロントエンドへ保存 (フォルダが存在する場合のみ)
-      if (fs.existsSync(frontendDir)) {
-        fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
-      }
-
-      console.log("originalname:", file.originalname);
+        console.log("originalname:", file.originalname);
+        console.log("saved as:", fileNameOnly);
       }
     }
 
@@ -275,6 +277,10 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
       // 元ファイル名を安全に
       const safeFileName = file.originalname.replace(/\s/g, "_");
 
+      console.log("originalname:", file.originalname);
+      console.log("safeFileName:", safeFileName);
+    
+
       // 同名ファイルがあれば警告
       if (fs.existsSync(path.join(backendDir, safeFileName))) {
         return res.status(400).json({ error: "同名の画像ファイルがすでに存在します" });
@@ -287,9 +293,9 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         .jpeg({ quality: 80 })
         .toBuffer();
 
-      fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+      fs.writeFileSync(path.join(backendDir, safeFileName), jpegBuffer);
       if (fs.existsSync(frontendDir)) {
-        fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
+        fs.writeFileSync(path.join(frontendDir, safeFileName), jpegBuffer);
       }
     }
 
