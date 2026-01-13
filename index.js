@@ -9,7 +9,7 @@ const multer = require("multer");
 const sharp = require("sharp"); // ★メンバー追加: 画像処理用
 
 const app = express();
-const port = 3000; // ★HTTPSポート
+const port = 443; // ★HTTPSポート
 
 app.use(cors());
 app.use(express.json());
@@ -139,19 +139,12 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
       return res.status(400).json({ error: "必須項目が不足しています" });
     }
 
-    let options = [];
-    if (body.options) options = JSON.parse(body.options);
-
+    const options = body.options ? JSON.parse(body.options) : [];
     let imageName = null;
 
     if (file) {
-      
-
-      // 保存先1: バックエンド自身のassets
+      /* ========= 保存先 ========= */
       const backendDir = path.join(__dirname, "assets");
-
-      // 保存先2: フロントエンド(管理画面)のpublic/assets (※フォルダ構成によりパス調整が必要な場合あり)
-      
       const frontendDir = path.join(
         __dirname,
         "..",
@@ -161,40 +154,28 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
         "assets"
       );
 
-
-      // 両方のフォルダがなければ作る
       [backendDir, frontendDir].forEach((dir) => {
-        // frontendDirへのパスが見つからない場合のエラー回避
-        try {
-          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        } catch (e) {
-          console.warn(`フォルダ作成スキップ: ${dir}`);
-        }
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       });
 
-      // 画像ファイル名の決定
-      if (file) {
-        const baseName = path.parse(file.originalname).name;  // 拡張子なし
-        const safeBaseName = baseName.replace(/\s/g, "_");
-        const fileNameOnly = `${safeBaseName}.jpeg`;
+      /* ========= ファイル名決定 ========= */
+      const parsed = path.parse(file.originalname);
+      const safeBaseName = parsed.name.replace(/\s/g, "_");
 
-        imageName = `/assets/${fileNameOnly}`;
+      // ★ MenuList 対応の決定打
+      const fileNameOnly = `${id}_${safeBaseName}.jpeg`;
+      imageName = `/assets/${fileNameOnly}`;
 
-        const jpegBuffer = await sharp(file.buffer)
-          .jpeg({ quality: 80 })
-          .toBuffer();
+      /* ========= jpeg に変換 ========= */
+      const jpegBuffer = await sharp(file.buffer)
+        .jpeg({ quality: 80 })
+        .toBuffer();
 
-        // バックエンドへ保存
-        fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+      fs.writeFileSync(path.join(backendDir, fileNameOnly), jpegBuffer);
+      fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
 
-        // フロントエンドへ保存
-        if (fs.existsSync(frontendDir)) {
-          fs.writeFileSync(path.join(frontendDir, fileNameOnly), jpegBuffer);
-        }
-
-        console.log("originalname:", file.originalname);
-        console.log("saved as:", fileNameOnly);
-      }
+      console.log("upload:", file.originalname);
+      console.log("saved :", fileNameOnly);
     }
 
     db.run(
@@ -206,7 +187,7 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
         name,
         description,
         price,
-        imageName,
+        imageName, // ← MenuList がそのまま使う
         category,
         JSON.stringify(options),
         isRecommended ? 1 : 0,
@@ -254,7 +235,7 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
       return res.status(400).json({ error: "更新内容がありません" });
     }
 
-    let imageName = body.image ?? null;
+    let imageName = null;
 
     if (file) {
       // 保存先の定義（追加時と同じロジック）
@@ -465,23 +446,15 @@ app.get("/api/tables", (req, res) => {
 /* ========================================================== */
 
 // 証明書ファイルの読み込み
-const selfsigned = require("selfsigned");
+  const sslOptions = {
+    key: fs.readFileSync(path.join(__dirname, "server.key")),
+    cert: fs.readFileSync(path.join(__dirname, "server.crt")),
+  };
 
-const attrs = [{ name: "commonName", value: "backend-server" }];
-const pems = selfsigned.generate(attrs, {
-  days: 365,
-  keySize: 2048,
-});
-
-// HTTPSサーバーを起動
-https.createServer(
-  {
-    key: pems.private,
-    cert: pems.cert,
-  },
-  app
-).listen(port, "0.0.0.0", () => {
-  console.log(`HTTPS Server running`);
-});
-
+  // HTTPSサーバーを起動
+  https.createServer(sslOptions, app).listen(port, "0.0.0.0", () => {
+    console.log(
+      `HTTPS Server running on port ${port} (https://localhost:${port})`
+    );
+  });
 
