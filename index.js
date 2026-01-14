@@ -260,11 +260,12 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
 
       console.log("originalname:", file.originalname);
       console.log("safeFileName:", safeFileName);
-    
 
       // 同名ファイルがあれば警告
       if (fs.existsSync(path.join(backendDir, safeFileName))) {
-        return res.status(400).json({ error: "同名の画像ファイルがすでに存在します" });
+        return res
+          .status(400)
+          .json({ error: "同名の画像ファイルがすでに存在します" });
       }
 
       imageName = `/assets/${safeFileName}`;
@@ -371,7 +372,17 @@ app.get("/api/orders", (req, res) => {
     }
   );
 });
-
+app.post("/api/checkout", (req, res) => {
+  const { tableNumber } = req.body;
+  db.run(
+    "UPDATE orders SET status = '会計済み' WHERE table_number = ? AND status != '会計済み'",
+    [tableNumber],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: "Checkout completed", changes: this.changes });
+    }
+  );
+});
 // 7. KDS用 注文一覧
 app.get("/api/kitchen/orders", (req, res) => {
   const sql = `SELECT * FROM orders 
@@ -446,15 +457,14 @@ app.get("/api/tables", (req, res) => {
 /* ========================================================== */
 
 // 証明書ファイルの読み込み
-  const sslOptions = {
-    key: fs.readFileSync(path.join(__dirname, "server.key")),
-    cert: fs.readFileSync(path.join(__dirname, "server.crt")),
-  };
+const sslOptions = {
+  key: fs.readFileSync(path.join(__dirname, "server.key")),
+  cert: fs.readFileSync(path.join(__dirname, "server.crt")),
+};
 
-  // HTTPSサーバーを起動
-  https.createServer(sslOptions, app).listen(port, "0.0.0.0", () => {
-    console.log(
-      `HTTPS Server running on port ${port} (https://localhost:${port})`
-    );
-  });
-
+// HTTPSサーバーを起動
+https.createServer(sslOptions, app).listen(port, "0.0.0.0", () => {
+  console.log(
+    `HTTPS Server running on port ${port} (https://localhost:${port})`
+  );
+});
