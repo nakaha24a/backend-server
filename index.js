@@ -372,6 +372,7 @@ app.get("/api/orders", (req, res) => {
     }
   );
 });
+
 app.post("/api/checkout", (req, res) => {
   const { tableNumber } = req.body;
   db.run(
