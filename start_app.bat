@@ -1,20 +1,28 @@
 @echo off
 title Order System Launcher
 
+echo ========================================================
+echo  Order System - Graduation Project
+echo ========================================================
+echo.
+
 if exist "node_modules" (
-    echo 起動準備完了。システムを起動します...
+    echo [OK] Modules are installed.
 ) else (
-    echo 初回セットアップを実行します（npm install）...
-    echo ※数分かかる場合があります。お待ちください。
+    echo [INFO] First time setup. Installing modules...
+    echo        Please wait a moment.
     call npm install
 )
 
 echo.
-echo ==========================================
-echo  HTTPS Server running...
-echo  客席側: https://localhost/
-echo  厨房側: https://localhost/admin/
-echo ==========================================
+echo [INFO] Starting HTTPS Server...
+echo.
+echo  ------------------------------------------
+echo   Customer App: https://localhost/
+echo   Kitchen App:  https://localhost/admin/
+echo  ------------------------------------------
+echo.
+echo  Press [Ctrl] + [C] to stop the server.
 echo.
 
 node index.js
