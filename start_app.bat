@@ -1,5 +1,5 @@
 @echo off
-title 注文システム起動ツール
+title Order System Launcher
 
 if exist "node_modules" (
     echo 起動準備完了。システムを起動します...
