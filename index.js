@@ -19,6 +19,11 @@ app.use("/static", express.static("assets"));
 app.use("/assets", express.static(path.join(__dirname, "assets")));
 app.use("/images", express.static(path.join(__dirname, "assets")));
 
+app.use((err, req, res, next) => {
+  console.error("Unexpected error:", err);
+  res.status(500).json({ error: err.message });
+});
+
 // データベース接続
 const db = new sqlite3.Database("./order_system.db", (err) => {
   if (err) {
