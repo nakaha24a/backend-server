@@ -43,7 +43,7 @@ function initDatabase() {
           total_price REAL NOT NULL,
           status TEXT NOT NULL DEFAULT '注文受付', 
           timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`
+        )`,
     );
 
     // メニューテーブル
@@ -64,7 +64,7 @@ function initDatabase() {
             if (row && row.count === 0) loadInitialMenuData();
           });
         }
-      }
+      },
     );
   });
 }
@@ -75,7 +75,7 @@ function loadInitialMenuData() {
     if (fs.existsSync(menuJsonPath)) {
       const menuData = JSON.parse(fs.readFileSync(menuJsonPath, "utf-8"));
       const stmt = db.prepare(
-        `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO Menus (id, name, description, price, image, category, options, isRecommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const category of menuData.categories) {
         for (const item of category.items) {
@@ -87,7 +87,7 @@ function loadInitialMenuData() {
             item.image,
             category.name,
             JSON.stringify(item.options || []),
-            item.isRecommended ? 1 : 0
+            item.isRecommended ? 1 : 0,
           );
         }
       }
@@ -151,7 +151,7 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
         "frontend-admin",
         "kds-app",
         "public",
-        "assets"
+        "assets",
       );
 
       [backendDir, frontendDir].forEach((dir) => {
@@ -195,7 +195,7 @@ app.post("/api/menu", upload.single("imageFile"), async (req, res) => {
       (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.status(201).json({ message: "メニューを追加しました" });
-      }
+      },
     );
   } catch (err) {
     console.error(err);
@@ -246,7 +246,7 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
         "frontend-admin",
         "kds-app",
         "public",
-        "assets"
+        "assets",
       );
 
       [backendDir, frontendDir].forEach((dir) => {
@@ -306,7 +306,7 @@ app.post("/api/menu/:id", upload.single("imageFile"), async (req, res) => {
           return res.status(500).json({ error: err.message });
         }
         res.json({ message: "メニュー更新完了" });
-      }
+      },
     );
   } catch (err) {
     console.error("POST error:", err);
@@ -336,7 +336,7 @@ app.post("/api/orders", (req, res) => {
   const timestamp = new Date().toISOString();
   const totalPrice = items.reduce(
     (sum, i) => sum + (i.totalPrice || i.price * i.quantity),
-    0
+    0,
   );
 
   db.run(
@@ -351,7 +351,7 @@ app.post("/api/orders", (req, res) => {
         status: "注文受付",
         timestamp,
       });
-    }
+    },
   );
 });
 
@@ -369,7 +369,7 @@ app.get("/api/orders", (req, res) => {
         items: JSON.parse(row.items || "[]"),
       }));
       res.json(formattedRows);
-    }
+    },
   );
 });
 
@@ -381,7 +381,7 @@ app.post("/api/checkout", (req, res) => {
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ message: "Checkout completed", changes: this.changes });
-    }
+    },
   );
 });
 // 7. KDS用 注文一覧
@@ -424,7 +424,7 @@ app.put("/api/orders/:id/status", (req, res) => {
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.json({ message: "Updated", id: orderId, status });
-    }
+    },
   );
 });
 
@@ -437,7 +437,7 @@ app.post("/api/call", (req, res) => {
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
       res.status(201).json({ id: this.lastID });
-    }
+    },
   );
 });
 
@@ -449,7 +449,7 @@ app.get("/api/tables", (req, res) => {
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       res.json(rows.map((r) => r.table_number));
-    }
+    },
   );
 });
 
@@ -466,6 +466,34 @@ const sslOptions = {
 // HTTPSサーバーを起動
 https.createServer(sslOptions, app).listen(port, "0.0.0.0", () => {
   console.log(
-    `HTTPS Server running on port ${port} (https://localhost:${port})`
+    `HTTPS Server running on port ${port} (https://localhost:${port})`,
   );
+});
+/* ========================================================== */
+/* ★追加: フロントエンドの配信設定 (これを追加してください) */
+/* ========================================================== */
+
+// 1. 静的ファイル（画像やJS）を配れるようにする
+app.use(express.static(path.join(__dirname, "public/client")));
+app.use("/admin", express.static(path.join(__dirname, "public/admin")));
+
+// 2. 客席側（ルートURL https://.../）へのアクセス
+// どんなURLで来ても index.html を返す（Reactルーター対策）
+app.get(/(.*)/, (req, res, next) => {
+  // APIへのアクセスは除外して、それ以外をindex.htmlへ
+  if (
+    req.path.startsWith("/api") ||
+    req.path.startsWith("/assets") ||
+    req.path.startsWith("/static")
+  ) {
+    return next();
+  }
+
+  if (req.path.startsWith("/admin")) {
+    // 厨房側へのアクセスなら厨房のindex.htmlを返す
+    return res.sendFile(path.join(__dirname, "public/admin", "index.html"));
+  }
+
+  // それ以外（客席側）なら客席のindex.htmlを返す
+  res.sendFile(path.join(__dirname, "public/client", "index.html"));
 });
